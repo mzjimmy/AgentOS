@@ -39,6 +39,8 @@ import { ProjectFilePreviewOverlay, type ProjectFilePreviewOverlayState } from '
 // single largest renderer route). It is only reachable from an explicit
 // navigation, so it must not sit in the first-paint bundle.
 const SettingsPage = lazy(async () => ({ default: (await import('./setting/SettingsPage')).SettingsPage }))
+const JournalPage = lazy(async () => ({ default: (await import('./journal/JournalPage')).JournalPage }))
+import type { JournalEntry } from '../journal-contract'
 import { useWorkspaceAgentMode } from './useWorkspaceAgentMode'
 import type { AgentModeSettingsResult, HomePluginRunItem } from '../desktop-types'
 import { projectContent } from '../project-content'
@@ -152,6 +154,8 @@ type AppShellWorkspaceProps = {
   onStopProjectSkillRun: (projectId: string, skillPath: string) => void
   showProjectSkillsInSidebar: boolean
   onShowProjectSkillsInSidebarChange: (enabled: boolean) => void
+  onJournalTodayCountChange?: (count: number) => void
+  onDiscussJournalEntry?: (entry: JournalEntry) => void
 }
 
 /** Shell 主体渲染路由器 / Shell workspace router mounting routed surfaces */
@@ -205,12 +209,15 @@ export function AppShellWorkspace({
   onStopProjectSkillRun,
   showProjectSkillsInSidebar,
   onShowProjectSkillsInSidebarChange,
+  onJournalTodayCountChange,
+  onDiscussJournalEntry,
 }: AppShellWorkspaceProps) {
   // --- Derived chrome flags (settings hide header; home “surface” vs chat stream) / 派生框架标志（设置页隐藏顶栏；首页表面对话流）---
 
   const { t } = useI18n()
   const runtimeDevelopmentUi = runtimeDevelopmentStatus(t, runtimeDevelopment)
   const isSettingsChromeHidden = activeViewId === 'settings'
+  const isJournalView = activeViewId === 'journal'
   const [sidePanel, setSidePanel] = useState<SidePanelState>(() => ({ open: false, tab: 'files' }))
   const [filePreview, setFilePreview] = useState<ProjectFilePreviewOverlayState | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -316,7 +323,7 @@ export function AppShellWorkspace({
 
   const openAgentSettings = useCallback((panel: AgentSettingsPanelId, options?: { showProjectHome?: boolean }) => {
     if (activeViewId !== 'home') {
-      window.location.hash = ''
+      window.location.hash = 'home'
     }
     if (options?.showProjectHome) {
       onSelectProject(activeProject.id)
@@ -551,7 +558,7 @@ export function AppShellWorkspace({
     <div className="app-workspace">
       {isSettingsChromeHidden ? (
         <div className="app-workspace-top-drag draggable" aria-hidden />
-      ) : (
+      ) : isJournalView ? null : (
         <header className="app-workspace-header" role="banner">
           {isRuntimeActive ? <nav className="runtime-preview-navigation no-drag" aria-label={t('runtime.previewNavigation')}>
             <button type="button" className="btn btn-toolbar" data-testid="runtime-preview-back" title={t('sidebar.back')} aria-label={t('sidebar.back')} onClick={() => onNavigateRuntime?.('back')} disabled={!onNavigateRuntime || !runtimeNavigation.canGoBack}>
@@ -665,6 +672,16 @@ export function AppShellWorkspace({
             onRunProjectSkill={onRunProjectSkill}
             onStopProjectSkillRun={onStopProjectSkillRun}
           />
+          {!isRuntimeActive && activeViewId === 'journal' ? (
+            <Suspense fallback={null}>
+              <JournalPage
+                hidden={false}
+                projects={projects}
+                onTodayCountChange={onJournalTodayCountChange}
+                onDiscussInChat={onDiscussJournalEntry}
+              />
+            </Suspense>
+          ) : null}
           {!isRuntimeActive ? <DocsPage hidden={activeViewId !== 'docs'} /> : null}
           {!isRuntimeActive && activeViewId === 'settings' ? (
             <Suspense fallback={null}>

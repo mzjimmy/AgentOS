@@ -30,6 +30,21 @@ import type {
   RuntimeDevelopmentTarget,
 } from './runtime-development-contract'
 import type {
+  JournalConfig,
+  JournalDaySummary,
+  JournalDayResult,
+  JournalWeekResult,
+  CreateJournalEntryInput,
+  CreateJournalEntryResult,
+  UpdateJournalEntryInput,
+  UpdateJournalEntryResult,
+  DeleteJournalEntryResult,
+  JournalAttachmentReadResult,
+  LegacyJournalSyncOptions,
+  LegacyJournalSyncResult,
+  JournalChangedEvent,
+} from './journal-contract'
+import type {
   AgentModeFilesResult,
   AgentMcpGlobalSettings,
   AgentMcpGlobalSettingsResult,
@@ -346,4 +361,34 @@ export type DesktopAPI = {
   downloadAppUpdate?: () => Promise<AppUpdaterState>
   quitAndInstallAppUpdate?: () => Promise<void>
   onAppUpdaterState?: (handler: (state: AppUpdaterState) => void) => () => void
+  getJournalConfig?: () => Promise<JournalConfig>
+  setJournalDeskRoot?: (deskRoot: string) => Promise<JournalConfig>
+  listJournalDays?: (month?: string) => Promise<JournalDaySummary[]>
+  getJournalDay?: (date: string) => Promise<JournalDayResult>
+  getJournalWeek?: (anchorDate: string) => Promise<JournalWeekResult>
+  createJournalEntry?: (input: CreateJournalEntryInput) => Promise<CreateJournalEntryResult>
+  updateJournalEntry?: (date: string, entryId: string, patch: UpdateJournalEntryInput) => Promise<UpdateJournalEntryResult>
+  deleteJournalEntry?: (date: string, entryId: string) => Promise<DeleteJournalEntryResult>
+  readJournalAttachment?: (relativePath: string) => Promise<JournalAttachmentReadResult>
+  syncLegacySentinelLabJournal?: (options?: LegacyJournalSyncOptions) => Promise<LegacyJournalSyncResult>
+  watchJournal?: () => Promise<{ ok: boolean }>
+  unwatchJournal?: () => Promise<{ ok: boolean }>
+  onJournalChanged?: (listener: (event: JournalChangedEvent) => void) => () => void
 }
+
+export type {
+  JournalConfig,
+  JournalDaySummary,
+  JournalDayResult,
+  JournalWeekResult,
+  CreateJournalEntryInput,
+  CreateJournalEntryResult,
+  UpdateJournalEntryInput,
+  UpdateJournalEntryResult,
+  DeleteJournalEntryResult,
+  JournalAttachmentReadResult,
+  LegacyJournalSyncOptions,
+  LegacyJournalSyncResult,
+  JournalChangedEvent,
+} from './journal-contract'
+

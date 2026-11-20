@@ -82,6 +82,7 @@ import {
 } from './chat/thread-chat-state-store'
 import { BrokerSnapshotStore } from './chat/broker-snapshot-source'
 import type { ProjectChatSnapshot } from '../project-chat-contract'
+import type { JournalEntry } from '../journal-contract'
 import { RuntimeOnboardingDialog } from './RuntimeOnboardingDialog'
 import { AgentOSPairingDialog } from './AgentOSPairingDialog'
 import { RuntimeWorkspace } from './RuntimeWorkspace'
@@ -333,6 +334,7 @@ export function AppShell() {
   const { t, locale } = useI18n()
   const [activeViewId, setActiveViewId] = useState<AppViewId>(() => viewFromLocation())
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategoryId>(() => settingsCategoryFromLocation())
+  const [journalTodayCount, setJournalTodayCount] = useState<number | undefined>(undefined)
   const [canBack, setCanBack] = useState(false)
   const [canForward, setCanForward] = useState(false)
   const [headerStatus, setHeaderStatus] = useState(() => translate(getInitialLocale(), 'shell.headerDefault'))
@@ -1410,7 +1412,10 @@ export function AppShell() {
   // --- Routing helper: strip hash to return to main workspace chrome / 路由辅助：清空 hash 回到主工作区框架 ---
 
   const goHome = useCallback(() => {
-    window.location.hash = ''
+    setActiveViewId('home')
+    if (window.location.hash.replace(/^#\/?/, '') !== 'home') {
+      window.location.hash = 'home'
+    }
   }, [])
 
   const handleWorkspaceCleared = useCallback(() => {
@@ -2566,7 +2571,8 @@ export function AppShell() {
 
   const selectProjectSkill = useCallback((projectId: string, skill: Omit<SelectedProjectSkill, 'projectId'>) => {
     setSelectedProjectSkill({ ...skill, projectId })
-  }, [])
+    goHome()
+  }, [goHome])
 
   const handleThreadPromptSubmit = useCallback((threadId: string, prompt: string) => {
     setSelectedProjectSkill(null)
@@ -2653,6 +2659,64 @@ export function AppShell() {
       }
     },
     [setActiveLocalAppPreviewVisible, syncHistoryButtons],
+  )
+
+  const openPinnedModule = useCallback(
+    (moduleId: Exclude<AppViewId, 'settings'>) => {
+      void setActiveLocalAppPreviewVisible(false)
+      setSelectedProjectSkill(null)
+      setActiveViewId(moduleId)
+      const currentHash = window.location.hash.replace(/^#\/?/, '')
+      if (currentHash !== moduleId) {
+        window.location.hash = moduleId
+      } else {
+        syncHistoryButtons()
+      }
+    },
+    [setActiveLocalAppPreviewVisible, syncHistoryButtons],
+  )
+
+  const discussJournalEntryInChat = useCallback(
+    (entry: JournalEntry) => {
+      const matchedProject = entry.projectRefs
+        .map((refName) =>
+          chatWorkspaceRef.current?.projects.find(
+            (project) => project.name.toLowerCase() === refName.toLowerCase(),
+          ),
+        )
+        .find(Boolean)
+      const targetProjectId = matchedProject?.id ?? activeProject?.id
+      if (!targetProjectId) return
+      const tagLine = entry.tags.map((tag) => `#${tag}`).join(' ')
+      const header = [`[${entry.date} ${entry.time}]`, `[${entry.category}]`, tagLine]
+        .filter(Boolean)
+        .join(' ')
+      const prompt = `${header}\n\n${entry.body}`.trim()
+      const threadTitle = `${entry.date} ${entry.time} · ${entry.category}`
+      goHome()
+      void (async () => {
+        if (projectChatEnabled && window.projectChat) {
+          const created = await window.projectChat.createThread({
+            projectId: targetProjectId,
+            title: threadTitle,
+            source: 'app-command',
+          })
+          if (!created.ok) return
+          selectThread(created.value.threadId)
+          await window.projectChat.submitRun({
+            projectId: targetProjectId,
+            threadId: created.value.threadId,
+            text: prompt,
+          })
+          return
+        }
+        const threadId = createThreadInProject(targetProjectId, { activate: true, title: threadTitle })
+        if (!threadId) return
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        await chatRef.current?.submitPromptInThread(targetProjectId, threadId, prompt)
+      })()
+    },
+    [activeProject?.id, createThreadInProject, goHome, projectChatEnabled, selectThread],
   )
 
   // --- `hashchange` → settings view; keep back/forward mirrors in sync / hash 变化映射到设置视图；同步前进后退按钮态 ---
@@ -3165,6 +3229,8 @@ export function AppShell() {
           onRestartWorkspaceRuntime={(tab) => restartLocalApp(tab.runtimeDefinitionId)}
           onStopWorkspaceRuntime={(tab) => stopLocalApp(tab.runtimeDefinitionId)}
           onOpenSearch={() => window.dispatchEvent(new CustomEvent('agentos:open-search', { detail: { scope: 'all' } }))}
+          onOpenPinnedModule={openPinnedModule}
+          journalTodayCount={journalTodayCount}
           onOpenSettingsCategory={openSettingsCategory}
           onSelectProject={selectProject}
           onSelectThread={selectThread}
@@ -3235,6 +3301,8 @@ export function AppShell() {
           onStopProjectSkillRun={stopProjectSkillRun}
           showProjectSkillsInSidebar={showProjectSkillsInSidebar}
           onShowProjectSkillsInSidebarChange={updateShowProjectSkillsInSidebar}
+          onJournalTodayCountChange={setJournalTodayCount}
+          onDiscussJournalEntry={discussJournalEntryInChat}
         />
         <RuntimeOnboardingDialog
           inspect={localAppInspect}

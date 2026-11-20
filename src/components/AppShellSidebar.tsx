@@ -33,6 +33,7 @@ import type {
   WorkspaceTab,
 } from './types'
 import { getSettingsSidebarNav } from './app-shell-constants.ts'
+import { PINNED_MODULES } from './pinned-modules'
 import { sortProjectsForSidebar } from './project-order'
 import { workspaceRuntimeScopeId, type RuntimeDevelopmentSnapshot } from '../runtime-development-contract'
 import { runtimeDevelopmentStatus, runtimeNeedsTroubleshooting } from './runtime-event-state'
@@ -87,6 +88,8 @@ type AppShellSidebarProps = {
   onRestartWorkspaceRuntime: (tab: WorkspaceTab) => void
   onStopWorkspaceRuntime: (tab: WorkspaceTab) => void
   onOpenSearch: () => void
+  onOpenPinnedModule: (moduleId: Exclude<AppViewId, 'settings'>) => void
+  journalTodayCount?: number
   onOpenSettingsCategory: (category: SettingsCategoryId) => void
   onSelectProject: (projectId: string) => void
   onSelectThread: (threadId: string) => void
@@ -141,6 +144,8 @@ export function AppShellSidebar({
   onRestartWorkspaceRuntime,
   onStopWorkspaceRuntime,
   onOpenSearch,
+  onOpenPinnedModule,
+  journalTodayCount,
   onOpenSettingsCategory,
   onSelectProject,
   onSelectThread,
@@ -682,6 +687,33 @@ export function AppShellSidebar({
               </>
             ) : (
               <>
+                <nav className="app-sidebar-section" aria-label={t('sidebar.pinnedSection')}>
+                  {PINNED_MODULES.map((mod) => {
+                    const isActive = activeViewId === mod.id
+                    const badgeCount = mod.id === 'journal' ? journalTodayCount : undefined
+                    return (
+                      <button
+                        key={mod.id}
+                        type="button"
+                        className={`app-nav-item${isActive ? ' is-active' : ''}`}
+                        data-pinned-module={mod.id}
+                        aria-current={isActive ? 'page' : undefined}
+                        onClick={() => onOpenPinnedModule(mod.id)}
+                      >
+                        <IconInline name={mod.icon} />
+                        <span>{t(mod.labelKey)}</span>
+                        {typeof badgeCount === 'number' && badgeCount > 0 ? (
+                          <span
+                            className="app-thread-time"
+                            style={{ marginLeft: 'auto' }}
+                          >
+                            {badgeCount}
+                          </span>
+                        ) : null}
+                      </button>
+                    )
+                  })}
+                </nav>
                 <div className="app-sidebar-section runtime-tabs-section" data-testid="runtime-tabs-section">
                   <div className="app-sidebar-section-heading">
                     <div className="app-sidebar-section-label">{t('runtime.section')}</div>

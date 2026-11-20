@@ -92,6 +92,8 @@ export const Icons = {
     '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 7v4.5a2 2 0 0 1-2 2H7a2 2 0 0 0-2 2v1.5M12 7v4.5a2 2 0 0 0 2 2h3a2 2 0 0 1 2 2v1.5"/></svg>',
   trash:
     '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" d="M5 7h14M10 11v6M14 11v6"/><path stroke-linejoin="round" d="M9 7l1-2h4l1 2M7 7l1 13h8l1-13"/></svg>',
+  journal:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2.2"/><path stroke-linecap="round" d="M9 8.5h6M9 12h6M9 15.5h4"/><path stroke-linecap="round" d="M3.5 8h2M3.5 12h2M3.5 16h2"/></svg>',
 } as const
 
 /** Icons 对象的联合键 / Keys available on Icons map */

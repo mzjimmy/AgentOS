@@ -38,6 +38,8 @@ import { RendererCapabilityRegistry, ProjectChatPermissionService, createProject
 import { createProjectChatBrokerRunnerAdapter, createProjectChatScopedReadCollaborator, createRuntimeChatScopedReadCollaborator } from './project-chat-runtime-services'
 import { ProjectChatPresenceRegistry } from './project-chat-presence'
 import { ProjectChatWindowManager } from './project-chat-window-manager'
+import { JournalStore } from './desk/journal-store'
+import { syncLegacySentinelLabJournal } from './desk/legacy-sync'
 import { ProjectChatViewStateStore } from './project-chat-view-state-store'
 import { RuntimePreviewLayoutStore } from './runtime-preview-layout-store'
 import { AgentOSDeepLinkQueue, parseAgentOSDeepLink } from './agentos-deep-link'
@@ -208,6 +210,20 @@ let claudeSettingsOperationChain: Promise<void> = Promise.resolve()
 let localAppRuntimeManager: LocalAppRuntimeManager | null = null
 let runtimeEditCoordinator: RuntimeEditCoordinator | null = null
 let runtimeEditRuntimeBridge: RuntimeEditRuntimeBridge | null = null
+let journalStore: JournalStore | null = null
+
+function getJournalStore(): JournalStore {
+  if (!journalStore) {
+    journalStore = new JournalStore({
+      onChange: (event) => {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(DESKTOP_EVENT_CHANNELS.onJournalChanged, event)
+        }
+      },
+    })
+  }
+  return journalStore
+}
 let projectRuntimePlacementTracker: ProjectRuntimePlacementTracker | null = null
 let localAppTrustStore: LocalAppTrustStore | null = null
 let localAppPreviewManager: LocalAppPreviewManager | null = null
@@ -1321,6 +1337,7 @@ async function prepareForAppQuit(): Promise<void> {
     // away so an in-flight transcript is not lost on quit.
     await chatWorkspaceStore?.flushPending().catch(() => undefined)
     speechRecognitionService?.dispose()
+    journalStore?.dispose()
     disposeProjectFileWatchers()
     await Promise.race([
       Promise.all([
@@ -2774,6 +2791,18 @@ if (gotSingleInstanceLock) {
       if (typeof rawUrl !== 'string' || !isExternalHttpUrl(rawUrl)) return
       await shell.openExternal(rawUrl)
     })
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalConfig, () => getJournalStore().getConfig())
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.setJournalDeskRoot, (_event, deskRoot: unknown) => getJournalStore().setDeskRoot(String(deskRoot)))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.listJournalDays, (_event, month?: unknown) => getJournalStore().listDays(typeof month === 'string' ? month : undefined))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalDay, (_event, date: unknown) => getJournalStore().getDay(String(date)))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalWeek, (_event, anchorDate: unknown) => getJournalStore().getWeek(String(anchorDate)))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.createJournalEntry, (_event, input: unknown) => getJournalStore().createEntry(input as any))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.updateJournalEntry, (_event, date: unknown, entryId: unknown, patch: unknown) => getJournalStore().updateEntry(String(date), String(entryId), patch as any))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.deleteJournalEntry, (_event, date: unknown, entryId: unknown) => getJournalStore().deleteEntry(String(date), String(entryId)))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.readJournalAttachment, (_event, relativePath: unknown) => getJournalStore().readAttachment(String(relativePath)))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.syncLegacySentinelLabJournal, (_event, options?: unknown) => syncLegacySentinelLabJournal(getJournalStore(), options as any))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.watchJournal, () => getJournalStore().watch())
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.unwatchJournal, () => getJournalStore().unwatch())
     createWindow()
     initializeAgentOSExternalTasks()
     ensureTray()

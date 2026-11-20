@@ -130,6 +130,18 @@ export const DESKTOP_INVOKE_CHANNELS = {
   checkForAppUpdates: 'app-updater:check',
   downloadAppUpdate: 'app-updater:download',
   quitAndInstallAppUpdate: 'app-updater:quit-and-install',
+  getJournalConfig: 'desktop:journal:get-config',
+  setJournalDeskRoot: 'desktop:journal:set-desk-root',
+  listJournalDays: 'desktop:journal:list-days',
+  getJournalDay: 'desktop:journal:get-day',
+  getJournalWeek: 'desktop:journal:get-week',
+  createJournalEntry: 'desktop:journal:create-entry',
+  updateJournalEntry: 'desktop:journal:update-entry',
+  deleteJournalEntry: 'desktop:journal:delete-entry',
+  readJournalAttachment: 'desktop:journal:read-attachment',
+  syncLegacySentinelLabJournal: 'desktop:journal:sync-legacy',
+  watchJournal: 'desktop:journal:watch',
+  unwatchJournal: 'desktop:journal:unwatch',
 } as const satisfies Record<DesktopInvokeCapability, string>
 
 export const DESKTOP_EVENT_CHANNELS = {
@@ -142,6 +154,7 @@ export const DESKTOP_EVENT_CHANNELS = {
   onRuntimeEvent: 'desktop:runtime:event',
   onRuntimeDevelopmentEvent: 'desktop:runtime-development:event',
   onRuntimePreviewNavigationState: 'desktop:runtime-preview:navigation-state-changed',
+  onJournalChanged: 'desktop:journal-changed',
 } as const satisfies Record<DesktopEventCapability, string>
 
 export const DESKTOP_SEAM_CAPABILITIES = [

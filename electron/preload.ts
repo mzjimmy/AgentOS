@@ -25,6 +25,21 @@ import type {
   TrayMenuAction,
 } from '../src/desktop-types'
 import type {
+  CreateJournalEntryInput,
+  CreateJournalEntryResult,
+  DeleteJournalEntryResult,
+  JournalAttachmentReadResult,
+  JournalChangedEvent,
+  JournalConfig,
+  JournalDayResult,
+  JournalDaySummary,
+  JournalWeekResult,
+  LegacyJournalSyncOptions,
+  LegacyJournalSyncResult,
+  UpdateJournalEntryInput,
+  UpdateJournalEntryResult,
+} from '../src/journal-contract'
+import type {
   ActiveChatPickPayload,
   ClaudeAgentSettings,
   ClaudeAgentStatusRequest,
@@ -474,6 +489,47 @@ const desktopAdapter = {
     const listener = (_event: IpcRendererEvent, state: AppUpdaterState) => handler(state)
     ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onAppUpdaterState, listener)
     return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onAppUpdaterState, listener)
+  },
+  getJournalConfig() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getJournalConfig) as Promise<JournalConfig>
+  },
+  setJournalDeskRoot(deskRoot: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.setJournalDeskRoot, deskRoot) as Promise<JournalConfig>
+  },
+  listJournalDays(month?: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.listJournalDays, month) as Promise<JournalDaySummary[]>
+  },
+  getJournalDay(date: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getJournalDay, date) as Promise<JournalDayResult>
+  },
+  getJournalWeek(anchorDate: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getJournalWeek, anchorDate) as Promise<JournalWeekResult>
+  },
+  createJournalEntry(input: CreateJournalEntryInput) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.createJournalEntry, input) as Promise<CreateJournalEntryResult>
+  },
+  updateJournalEntry(date: string, entryId: string, patch: UpdateJournalEntryInput) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.updateJournalEntry, date, entryId, patch) as Promise<UpdateJournalEntryResult>
+  },
+  deleteJournalEntry(date: string, entryId: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.deleteJournalEntry, date, entryId) as Promise<DeleteJournalEntryResult>
+  },
+  readJournalAttachment(relativePath: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.readJournalAttachment, relativePath) as Promise<JournalAttachmentReadResult>
+  },
+  syncLegacySentinelLabJournal(options?: LegacyJournalSyncOptions) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.syncLegacySentinelLabJournal, options) as Promise<LegacyJournalSyncResult>
+  },
+  watchJournal() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.watchJournal) as Promise<{ ok: boolean }>
+  },
+  unwatchJournal() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.unwatchJournal) as Promise<{ ok: boolean }>
+  },
+  onJournalChanged(handler: (event: JournalChangedEvent) => void) {
+    const listener = (_event: IpcRendererEvent, event: JournalChangedEvent) => handler(event)
+    ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onJournalChanged, listener)
+    return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onJournalChanged, listener)
   },
 } satisfies DesktopAPI
 

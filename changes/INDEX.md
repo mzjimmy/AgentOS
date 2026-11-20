@@ -2,6 +2,7 @@
 
 | Change ID | 标题 | 状态 | 路径 |
 |---|---|---|---|
+| `chg-20261120-sentinel-desk-journal` | SentinelDesk 时间日记固定页与飞书双写桥接 | active（verified on `feat/sentinel-desk-journal`；20/20 new TDD tests + 520/524 suite + live 1,143-entry readonly sync + bridge dual-write E2E） | `active/chg-20261120-sentinel-desk-journal/` |
 | `chg-20261119-task-skill-sessions` | 任务卡 Skill 独立会话 | 已归档（verified，revision 1） | [验收场景](archive/2026/chg-20261119-task-skill-sessions/ExampleMapping.md) |
 | `chg-20260818-agent-command-channel` | Agent 指令通道、独立项目 Chat 与 Runtime 开发会话 | active（Revision 4 implementing：R3 开发会话与 R4 伺服探测已落码、Development Check 与 GUI smoke 通过；正式 GUI 验收未全量执行；2026-08-31 用户视角评审证据见 exploration.md §5） | `active/chg-20260818-agent-command-channel/` |
 | `chg-20260825-local-app-tabs-runtime` | 通用 Workspace Tab 与可复用 Runtime | done (coverage_gate=degraded) | `archive/2026/chg-20260825-local-app-tabs-runtime/` |
