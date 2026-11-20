@@ -195,3 +195,12 @@ test('legacy-sync: resolves Asia/Shanghai date-aligned time and avoids ID prefix
     rmSync(tempDir, { recursive: true, force: true })
   }
 })
+
+
+test('legacy-sync: always aligns ISO timestamps to Asia/Shanghai even when local timezone shares the same date', () => {
+  const { parseLegacyTimestamp } = loadTsModule(resolve(rootDir, 'electron/desk/legacy-sync.ts'))
+
+  // 2026-11-18T08:03:18.740Z is 2026-11-18 00:03 in PST (same date!) but 2026-11-18 16:03 in Asia/Shanghai
+  assert.equal(parseLegacyTimestamp('2026-11-18', '2026-11-18T08:03:18.740Z').time, '16:03')
+  assert.equal(parseLegacyTimestamp('2026-11-19', '2026-11-19T08:30:00.000Z').time, '16:30')
+})

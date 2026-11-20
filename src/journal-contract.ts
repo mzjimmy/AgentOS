@@ -4,6 +4,8 @@
  * import exclusively from this contract.
  */
 
+export const JOURNAL_TIMEZONE = 'Asia/Shanghai'
+
 export const DEFAULT_SENTINEL_DESK_ROOT = '/Users/sentinellab/VibeCoding/SentinelDesk'
 export const DEFAULT_LEGACY_SENTINELLAB_DB_PATH =
   '/Users/sentinellab/Library/Application Support/SentinelLab/sentinellab.db'
@@ -219,3 +221,7 @@ export type JournalChangedEvent = {
   dates: string[]
   timestamp: number
 }
+
+export type JournalDiscussTarget =
+  | { kind: 'desk'; deskRoot: string }
+  | { kind: 'project'; projectId: string }

@@ -82,7 +82,7 @@ import {
 } from './chat/thread-chat-state-store'
 import { BrokerSnapshotStore } from './chat/broker-snapshot-source'
 import type { ProjectChatSnapshot } from '../project-chat-contract'
-import type { JournalEntry } from '../journal-contract'
+import type { JournalDiscussTarget, JournalEntry } from '../journal-contract'
 import { RuntimeOnboardingDialog } from './RuntimeOnboardingDialog'
 import { AgentOSPairingDialog } from './AgentOSPairingDialog'
 import { RuntimeWorkspace } from './RuntimeWorkspace'
@@ -2676,47 +2676,92 @@ export function AppShell() {
     [setActiveLocalAppPreviewVisible, syncHistoryButtons],
   )
 
+  const discussingJournalRef = useRef(false)
+
   const discussJournalEntryInChat = useCallback(
-    (entry: JournalEntry) => {
-      const matchedProject = entry.projectRefs
-        .map((refName) =>
-          chatWorkspaceRef.current?.projects.find(
-            (project) => project.name.toLowerCase() === refName.toLowerCase(),
-          ),
-        )
-        .find(Boolean)
-      const targetProjectId = matchedProject?.id ?? activeProject?.id
-      if (!targetProjectId) return
-      const tagLine = entry.tags.map((tag) => `#${tag}`).join(' ')
-      const header = [`[${entry.date} ${entry.time}]`, `[${entry.category}]`, tagLine]
-        .filter(Boolean)
-        .join(' ')
-      const prompt = `${header}\n\n${entry.body}`.trim()
-      const threadTitle = `${entry.date} ${entry.time} · ${entry.category}`
-      goHome()
-      void (async () => {
-        if (projectChatEnabled && window.projectChat) {
+    async (entry: JournalEntry, target: JournalDiscussTarget) => {
+      if (discussingJournalRef.current) return
+      discussingJournalRef.current = true
+      try {
+        let targetProjectId: string | undefined
+        if (target.kind === 'project') {
+          targetProjectId = chatWorkspaceRef.current?.projects.find((p) => p.id === target.projectId)?.id
+        } else {
+          const normalizedDesk = target.deskRoot.replace(/[\\/]+$/, '')
+          const existingDesk = chatWorkspaceRef.current?.projects.find(
+            (p) => p.path.replace(/[\\/]+$/, '') === normalizedDesk,
+          )
+          if (existingDesk) {
+            targetProjectId = existingDesk.id
+          } else {
+            const createdProject = await workspaceCommandClient.submit(
+              { type: 'project.create', name: 'SentinelDesk', path: normalizedDesk },
+              { preserveSelection: false },
+            )
+            if (createdProject.ok) {
+              targetProjectId = createdProject.workspace.projects.find(
+                (p) => p.path.replace(/[\\/]+$/, '') === normalizedDesk,
+              )?.id
+            }
+          }
+        }
+        if (!targetProjectId) {
+          setHeaderStatus(t('chat.errorGeneric'))
+          return
+        }
+
+        const tagLine = entry.tags.map((tag) => `#${tag}`).join(' ')
+        const header = [`[${entry.date} ${entry.time}]`, `[${entry.category}]`, tagLine]
+          .filter(Boolean)
+          .join(' ')
+        const prompt = `${header}\n\n${entry.body}`.trim()
+        const threadTitle = `${entry.date} ${entry.time} · ${entry.category}`
+
+        void setActiveLocalAppPreviewVisible(false)
+        setSelectedProjectSkill(null)
+
+        if (projectChatReadinessRef.current !== 'legacy' && window.projectChat) {
           const created = await window.projectChat.createThread({
             projectId: targetProjectId,
             title: threadTitle,
-            source: 'app-command',
+            source: 'user',
           })
-          if (!created.ok) return
-          selectThread(created.value.threadId)
-          await window.projectChat.submitRun({
+          if (!created.ok) {
+            setHeaderStatus(created.error.message)
+            return
+          }
+          // Hydrate the newly created thread into chatWorkspace BEFORE selecting it so selectThread activates cleanly.
+          await refreshProjectChatSnapshot(targetProjectId)
+          updateChatWorkspace((prev) => workspaceSession.selectThread(prev, created.value.threadId))
+          goHome()
+          const submitted = await window.projectChat.submitRun({
             projectId: targetProjectId,
             threadId: created.value.threadId,
             text: prompt,
           })
+          if (!submitted.ok) setHeaderStatus(submitted.error.message)
           return
         }
+
         const threadId = createThreadInProject(targetProjectId, { activate: true, title: threadTitle })
         if (!threadId) return
+        goHome()
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
         await chatRef.current?.submitPromptInThread(targetProjectId, threadId, prompt)
-      })()
+      } finally {
+        discussingJournalRef.current = false
+      }
     },
-    [activeProject?.id, createThreadInProject, goHome, projectChatEnabled, selectThread],
+    [
+      createThreadInProject,
+      goHome,
+      refreshProjectChatSnapshot,
+      setActiveLocalAppPreviewVisible,
+      t,
+      updateChatWorkspace,
+      workspaceCommandClient,
+      workspaceSession,
+    ],
   )
 
   // --- `hashchange` → settings view; keep back/forward mirrors in sync / hash 变化映射到设置视图；同步前进后退按钮态 ---
@@ -2729,14 +2774,19 @@ export function AppShell() {
     }
     window.addEventListener('hashchange', onHash)
     window.addEventListener('popstate', syncHistoryButtons)
-    window.addEventListener('resize', handleWindowResize)
     onHash()
     return () => {
       window.removeEventListener('hashchange', onHash)
       window.removeEventListener('popstate', syncHistoryButtons)
+    }
+  }, [syncHistoryButtons])
+
+  useEffect(() => {
+    window.addEventListener('resize', handleWindowResize)
+    return () => {
       window.removeEventListener('resize', handleWindowResize)
     }
-  }, [handleWindowResize, syncHistoryButtons])
+  }, [handleWindowResize])
 
   // --- On boot, reapply stored sidebar width token / 启动时重新应用已保存的侧栏宽度 ---
 

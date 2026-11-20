@@ -8,12 +8,14 @@ import '../../styles/journal-page.css'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { IconInline } from '../../icon-inline'
 import { useI18n } from '../../i18n/i18n'
-import type {
-  CreateJournalEntryInput,
-  JournalConfig,
-  JournalEntry,
-  JournalWeekDay,
-  UpdateJournalEntryInput,
+import {
+  DEFAULT_SENTINEL_DESK_ROOT,
+  type CreateJournalEntryInput,
+  type JournalConfig,
+  type JournalDiscussTarget,
+  type JournalEntry,
+  type JournalWeekDay,
+  type UpdateJournalEntryInput,
 } from '../../journal-contract'
 import type { WorkspaceProject } from '../types'
 import { JournalCard } from './JournalCard'
@@ -49,7 +51,7 @@ export type JournalPageProps = {
   hidden?: boolean
   projects: WorkspaceProject[]
   onTodayCountChange?: (count: number) => void
-  onDiscussInChat?: (entry: JournalEntry) => void
+  onDiscussInChat?: (entry: JournalEntry, target: JournalDiscussTarget) => void | Promise<void>
 }
 
 export function JournalPage({
@@ -581,6 +583,8 @@ export function JournalPage({
                   key={entry.id}
                   entry={entry}
                   index={idx}
+                  projects={projects}
+                  deskRoot={config?.deskRoot ?? DEFAULT_SENTINEL_DESK_ROOT}
                   imageCache={imageCache}
                   onOpenImage={handleOpenImage}
                   onUpdateEntry={handleUpdateEntry}

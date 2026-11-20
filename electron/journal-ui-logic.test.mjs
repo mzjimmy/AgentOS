@@ -215,3 +215,41 @@ test('journal-ui-helpers handles lightbox wrapping, snippet truncation, and chat
   assert.match(prompt, /分清楚什么是需求、什么是反馈/)
   assert.match(prompt, /#agent os/)
 })
+
+
+test('journal-ui-helpers aligns default date and time strictly to Asia/Shanghai regardless of host timezone', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  assert.equal(helpers.toLocalDateString(new Date('2026-11-20T20:53:00.000Z')), '2026-11-21')
+  assert.equal(helpers.toLocalTimeString(new Date('2026-11-20T20:53:00.000Z')), '04:53')
+  assert.equal(helpers.toLocalDateString(new Date('2026-11-18T08:03:18.740Z')), '2026-11-18')
+  assert.equal(helpers.toLocalTimeString(new Date('2026-11-18T08:03:18.740Z')), '16:03')
+})
+
+test('journal-ui-helpers builds explicit discuss targets prioritizing SentinelDesk and matched @projectRefs', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+  const projects = [
+    { id: 'p-unrelated', name: '【2026-029】PFMEA', path: '/Users/sentinellab/VibeCoding/PFMEA' },
+    { id: 'p-plan', name: '【2026-024】Plan Flow-up', path: '/Users/sentinellab/VibeCoding/Plan' },
+  ]
+  const deskRoot = '/Users/sentinellab/VibeCoding/SentinelDesk'
+
+  const plainOptions = helpers.buildJournalDiscussTargets(
+    { projectRefs: [] },
+    projects,
+    deskRoot,
+  )
+  assert.equal(plainOptions[0].kind, 'desk')
+  assert.equal(plainOptions[0].deskRoot, deskRoot)
+  assert.equal(plainOptions.length, 3)
+
+  const linkedOptions = helpers.buildJournalDiscussTargets(
+    { projectRefs: ['【2026-024】Plan Flow-up'] },
+    projects,
+    deskRoot,
+  )
+  assert.equal(linkedOptions[0].kind, 'project')
+  assert.equal(linkedOptions[0].projectId, 'p-plan')
+  assert.equal(linkedOptions[0].matched, true)
+  assert.equal(linkedOptions[1].kind, 'desk')
+})

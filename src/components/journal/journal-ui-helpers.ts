@@ -6,6 +6,7 @@
 
 import {
   JOURNAL_CATEGORIES,
+  JOURNAL_TIMEZONE,
   type CreateJournalEntryInput,
   type CreateJournalEntryResult,
   type DeleteJournalEntryResult,
@@ -15,6 +16,7 @@ import {
   type JournalConfig,
   type JournalDayResult,
   type JournalDaySummary,
+  type JournalDiscussTarget,
   type JournalEntry,
   type JournalEntryKind,
   type JournalWeekResult,
@@ -86,14 +88,37 @@ function formatUtcDate(date: Date): string {
   return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`
 }
 
-/** Local calendar date `YYYY-MM-DD`. */
-export function toLocalDateString(date: Date = new Date()): string {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+function formatShanghaiParts(date: Date): { year: string; month: string; day: string; hour: string; minute: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: JOURNAL_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
+  const hourRaw = get('hour')
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: hourRaw === '24' ? '00' : hourRaw,
+    minute: get('minute'),
+  }
 }
 
-/** Local `HH:mm`. */
+/** Calendar date `YYYY-MM-DD` strictly in `Asia/Shanghai` (UTC+8). */
+export function toLocalDateString(date: Date = new Date()): string {
+  const { year, month, day } = formatShanghaiParts(date)
+  return `${year}-${month}-${day}`
+}
+
+/** Clock time `HH:mm` strictly in `Asia/Shanghai` (UTC+8). */
 export function toLocalTimeString(date: Date = new Date()): string {
-  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`
+  const { hour, minute } = formatShanghaiParts(date)
+  return `${hour}:${minute}`
 }
 
 /** Add/subtract calendar days without timezone/DST drift. */
@@ -256,5 +281,50 @@ export function buildJournalDiscussPrompt(entry: JournalEntry): string {
     metaParts.push(entry.projectRefs.map((name) => `@${name}`).join(' '))
   }
   return `${metaParts.join(' ')}\n\n${entry.body}`.trim()
+}
+
+export type JournalDiscussTargetOption =
+  | { kind: 'desk'; deskRoot: string; label: string; matched: boolean }
+  | { kind: 'project'; projectId: string; label: string; matched: boolean }
+
+export function buildJournalDiscussTargets(
+  entry: Pick<JournalEntry, 'projectRefs'>,
+  projects: ReadonlyArray<{ id: string; name: string; path: string }>,
+  deskRoot: string,
+): JournalDiscussTargetOption[] {
+  const normalizedDesk = deskRoot.replace(/[\\/]+$/, '')
+  const refSet = new Set(entry.projectRefs.map((r) => r.trim().toLowerCase()).filter(Boolean))
+  const deskProject = projects.find((p) => p.path.replace(/[\\/]+$/, '') === normalizedDesk)
+
+  const matchedProjects: JournalDiscussTargetOption[] = []
+  const otherProjects: JournalDiscussTargetOption[] = []
+
+  for (const project of projects) {
+    if (deskProject && project.id === deskProject.id) continue
+    const isMatched = refSet.has(project.name.trim().toLowerCase())
+    const option: JournalDiscussTargetOption = {
+      kind: 'project',
+      projectId: project.id,
+      label: project.name,
+      matched: isMatched,
+    }
+    if (isMatched) matchedProjects.push(option)
+    else otherProjects.push(option)
+  }
+
+  const deskOption: JournalDiscussTargetOption = {
+    kind: 'desk',
+    deskRoot: normalizedDesk,
+    label: 'SentinelDesk',
+    matched: false,
+  }
+
+  return [...matchedProjects, deskOption, ...otherProjects]
+}
+
+export function toJournalDiscussTarget(option: JournalDiscussTargetOption): JournalDiscussTarget {
+  return option.kind === 'desk'
+    ? { kind: 'desk', deskRoot: option.deskRoot }
+    : { kind: 'project', projectId: option.projectId }
 }
 

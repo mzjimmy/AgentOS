@@ -81,17 +81,9 @@ export function parseLegacyTimestamp(date: string, timestamp: string): { time: s
   try {
     const d = new Date(timestamp)
     if (!isNaN(d.getTime())) {
-      // SentinelLab stores `date` as the user's calendar day (typically Asia/Shanghai UTC+8)
-      // while `timestamp` is a UTC ISO string. Prefer the timezone whose calendar date matches `date`.
-      const local = formatDateAndTimeInZone(d)
-      if (local.date === date) {
-        return { time: local.time, ts: d.toISOString() }
-      }
+      // Always align journal times to Asia/Shanghai (UTC+8) regardless of host OS timezone.
       const shanghai = formatDateAndTimeInZone(d, 'Asia/Shanghai')
-      if (shanghai.date === date) {
-        return { time: shanghai.time, ts: d.toISOString() }
-      }
-      return { time: local.time, ts: d.toISOString() }
+      return { time: shanghai.time, ts: d.toISOString() }
     }
   } catch {
     // fallback

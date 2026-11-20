@@ -10,6 +10,7 @@ import {
   DEFAULT_LEGACY_SENTINELLAB_DB_PATH,
   DEFAULT_SENTINELLAB_BRIDGE_SCRIPT_PATH,
   DEFAULT_SENTINEL_DESK_ROOT,
+  JOURNAL_TIMEZONE,
   type CreateJournalEntryInput,
   type CreateJournalEntryResult,
   type DeleteJournalEntryResult,
@@ -180,10 +181,11 @@ export class JournalStore {
 
   async createEntry(input: CreateJournalEntryInput): Promise<CreateJournalEntryResult> {
     try {
-      const now = new Date()
-      const targetDate = input.date || formatLocalDate(now)
-      const targetTime = input.time || formatLocalTime(now)
-      const targetTs = input.ts || now.toISOString()
+      const parsedTs = input.ts ? new Date(input.ts) : null
+      const baseDate = parsedTs && !Number.isNaN(parsedTs.getTime()) ? parsedTs : new Date()
+      const targetDate = input.date || formatLocalDate(baseDate)
+      const targetTime = input.time || formatLocalTime(baseDate)
+      const targetTs = input.ts || baseDate.toISOString()
       const filePath = this.getDayFilePath(targetDate)
 
       // 1. Read existing entries to check dedup
@@ -624,17 +626,35 @@ export class JournalStore {
   }
 }
 
+function formatShanghaiParts(d: Date): { year: string; month: string; day: string; hour: string; minute: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: JOURNAL_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00'
+  const hourRaw = get('hour')
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: hourRaw === '24' ? '00' : hourRaw,
+    minute: get('minute'),
+  }
+}
+
 function formatLocalDate(d: Date): string {
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
+  const { year, month, day } = formatShanghaiParts(d)
   return `${year}-${month}-${day}`
 }
 
 function formatLocalTime(d: Date): string {
-  const hours = String(d.getHours()).padStart(2, '0')
-  const minutes = String(d.getMinutes()).padStart(2, '0')
-  return `${hours}:${minutes}`
+  const { hour, minute } = formatShanghaiParts(d)
+  return `${hour}:${minute}`
 }
 
 export function getWeekDates(anchorDate: string): string[] {

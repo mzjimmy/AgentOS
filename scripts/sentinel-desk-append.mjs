@@ -11,17 +11,37 @@ import { randomBytes } from 'node:crypto'
 
 const DEFAULT_SENTINEL_DESK_ROOT = '/Users/sentinellab/VibeCoding/SentinelDesk'
 
+const JOURNAL_TIMEZONE = 'Asia/Shanghai'
+
+function formatShanghaiParts(d) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: JOURNAL_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d)
+  const get = (type) => parts.find((p) => p.type === type)?.value ?? '00'
+  const hourRaw = get('hour')
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: hourRaw === '24' ? '00' : hourRaw,
+    minute: get('minute'),
+  }
+}
+
 function formatLocalDate(d) {
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
+  const { year, month, day } = formatShanghaiParts(d)
   return `${year}-${month}-${day}`
 }
 
 function formatLocalTime(d) {
-  const hours = String(d.getHours()).padStart(2, '0')
-  const minutes = String(d.getMinutes()).padStart(2, '0')
-  return `${hours}:${minutes}`
+  const { hour, minute } = formatShanghaiParts(d)
+  return `${hour}:${minute}`
 }
 
 async function readStdin() {

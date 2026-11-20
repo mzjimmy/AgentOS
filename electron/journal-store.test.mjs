@@ -420,3 +420,23 @@ test('journal-markdown: preserves markdown horizontal rules (---) inside entry p
   assert.equal(parsed[1].id, 'je_20261120_110000_hr2')
   assert.equal(parsed[1].body, '第二条独立记录')
 })
+
+
+test('journal-store: defaults entry date and time to Asia/Shanghai regardless of host timezone', async () => {
+  const { JournalStore } = loadTsModule(resolve(rootDir, 'electron/desk/journal-store.ts'))
+  const tempDeskRoot = mkdtempSync(join(tmpdir(), 'sentinel-desk-tz-test-'))
+  try {
+    const store = new JournalStore({ deskRoot: tempDeskRoot })
+    const res = await store.createEntry({
+      ts: '2026-11-20T20:53:00.000Z',
+      body: '对齐东八区时间测试',
+      category: '学习',
+    })
+    assert.equal(res.ok, true)
+    if (!res.ok) return
+    assert.equal(res.entry.date, '2026-11-21')
+    assert.equal(res.entry.time, '04:53')
+  } finally {
+    rmSync(tempDeskRoot, { recursive: true, force: true })
+  }
+})

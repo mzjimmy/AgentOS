@@ -1571,3 +1571,87 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   color: #EDEAE3;
   line-height: 1.5;
 }
+
+
+/* --- Explicit Discuss Target Popover --- */
+.journal-discuss-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.journal-card-actions:has(.journal-discuss-popover) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.journal-discuss-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 224px;
+  max-width: 280px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-surface);
+  box-shadow: 0 4px 16px rgba(35, 34, 31, 0.12), 0 1px 3px rgba(35, 34, 31, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.journal-discuss-popover-head {
+  padding: 4px 8px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--j-ink-3);
+  border-bottom: 1px solid var(--j-line);
+  margin-bottom: 2px;
+}
+
+.journal-discuss-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--j-ink-1);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.journal-discuss-item:hover,
+.journal-discuss-item:focus-visible {
+  background: var(--j-sunken);
+  outline: none;
+}
+
+.journal-discuss-item.is-desk .journal-discuss-item-name,
+.journal-discuss-item.is-matched .journal-discuss-item-name {
+  font-weight: 500;
+}
+
+.journal-discuss-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journal-discuss-item-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+}

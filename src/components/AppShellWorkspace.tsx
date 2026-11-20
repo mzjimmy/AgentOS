@@ -40,7 +40,7 @@ import { ProjectFilePreviewOverlay, type ProjectFilePreviewOverlayState } from '
 // navigation, so it must not sit in the first-paint bundle.
 const SettingsPage = lazy(async () => ({ default: (await import('./setting/SettingsPage')).SettingsPage }))
 const JournalPage = lazy(async () => ({ default: (await import('./journal/JournalPage')).JournalPage }))
-import type { JournalEntry } from '../journal-contract'
+import type { JournalDiscussTarget, JournalEntry } from '../journal-contract'
 import { useWorkspaceAgentMode } from './useWorkspaceAgentMode'
 import type { AgentModeSettingsResult, HomePluginRunItem } from '../desktop-types'
 import { projectContent } from '../project-content'
@@ -155,7 +155,7 @@ type AppShellWorkspaceProps = {
   showProjectSkillsInSidebar: boolean
   onShowProjectSkillsInSidebarChange: (enabled: boolean) => void
   onJournalTodayCountChange?: (count: number) => void
-  onDiscussJournalEntry?: (entry: JournalEntry) => void
+  onDiscussJournalEntry?: (entry: JournalEntry, target: JournalDiscussTarget) => void | Promise<void>
 }
 
 /** Shell 主体渲染路由器 / Shell workspace router mounting routed surfaces */

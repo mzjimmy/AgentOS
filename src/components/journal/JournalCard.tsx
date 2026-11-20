@@ -3,36 +3,45 @@
  * 支持图片懒加载、分类切换、行内编辑、安全二次确认删除与开对话探讨。
  */
 
-import { useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { IconInline } from '../../icon-inline'
 import { useI18n } from '../../i18n/i18n'
 import {
+  DEFAULT_SENTINEL_DESK_ROOT,
   JOURNAL_CATEGORIES,
   type JournalCategory,
+  type JournalDiscussTarget,
   type JournalEntry,
   type UpdateJournalEntryInput,
 } from '../../journal-contract'
+import type { WorkspaceProject } from '../types'
 import {
+  buildJournalDiscussTargets,
   classifyJournalCardSpan,
   getJournalCategorySlug,
   getNextJournalCategory,
   resolveEffectiveCardKind,
+  toJournalDiscussTarget,
 } from './journal-ui-helpers'
 
 type JournalCardProps = {
   entry: JournalEntry
   index: number
+  projects?: WorkspaceProject[]
+  deskRoot?: string
   imageCache: Record<string, string>
   onOpenImage: (entry: JournalEntry, imageIndex: number) => void
   onUpdateEntry: (entryId: string, patch: UpdateJournalEntryInput) => Promise<boolean>
   onDeleteEntry: (entryId: string) => Promise<boolean>
-  onDiscussInChat?: (entry: JournalEntry) => void
+  onDiscussInChat?: (entry: JournalEntry, target: JournalDiscussTarget) => void | Promise<void>
   onFilterByTag?: (tag: string) => void
 }
 
 export function JournalCard({
   entry,
   index,
+  projects = [],
+  deskRoot = DEFAULT_SENTINEL_DESK_ROOT,
   imageCache,
   onOpenImage,
   onUpdateEntry,
@@ -47,6 +56,42 @@ export function JournalCard({
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [discussMenuOpen, setDiscussMenuOpen] = useState(false)
+  const [discussing, setDiscussing] = useState(false)
+  const discussAnchorRef = useRef<HTMLDivElement | null>(null)
+
+  const discussTargets = useMemo(
+    () => buildJournalDiscussTargets(entry, projects, deskRoot),
+    [deskRoot, entry, projects],
+  )
+
+  useEffect(() => {
+    if (!discussMenuOpen) return
+    const onMouseDown = (event: MouseEvent) => {
+      if (discussAnchorRef.current?.contains(event.target as Node)) return
+      setDiscussMenuOpen(false)
+    }
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setDiscussMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [discussMenuOpen])
+
+  const handleSelectDiscussTarget = async (target: JournalDiscussTarget) => {
+    if (!onDiscussInChat || discussing) return
+    setDiscussMenuOpen(false)
+    setDiscussing(true)
+    try {
+      await onDiscussInChat(entry, target)
+    } finally {
+      setDiscussing(false)
+    }
+  }
 
   const species = resolveEffectiveCardKind(entry)
   const colSpan = classifyJournalCardSpan(entry, index)
@@ -112,15 +157,42 @@ export function JournalCard({
   const renderHoverActions = () => (
     <div className="journal-card-actions" role="toolbar" aria-label={t('journal.cardActions')}>
       {onDiscussInChat ? (
-        <button
-          type="button"
-          className="journal-card-action-btn"
-          title={t('journal.discussInChat')}
-          aria-label={t('journal.discussInChat')}
-          onClick={() => onDiscussInChat(entry)}
-        >
-          <IconInline name="message" />
-        </button>
+        <div className="journal-discuss-anchor" ref={discussAnchorRef}>
+          <button
+            type="button"
+            className="journal-card-action-btn"
+            title={t('journal.discussInChat')}
+            aria-label={t('journal.discussInChat')}
+            aria-expanded={discussMenuOpen}
+            disabled={discussing}
+            onClick={() => setDiscussMenuOpen((open) => !open)}
+          >
+            <IconInline name="message" />
+          </button>
+          {discussMenuOpen ? (
+            <div className="journal-discuss-popover" role="menu" aria-label={t('journal.discussPickTitle')}>
+              <div className="journal-discuss-popover-head">{t('journal.discussPickTitle')}</div>
+              {discussTargets.map((option) => (
+                <button
+                  key={option.kind === 'desk' ? `desk:${option.deskRoot}` : `proj:${option.projectId}`}
+                  type="button"
+                  role="menuitem"
+                  className={`journal-discuss-item${option.kind === 'desk' ? ' is-desk' : ''}${option.matched ? ' is-matched' : ''}`}
+                  onClick={() => void handleSelectDiscussTarget(toJournalDiscussTarget(option))}
+                >
+                  <span className="journal-discuss-item-name">
+                    {option.kind === 'desk' ? t('journal.discussDeskLabel') : option.label}
+                  </span>
+                  {option.matched ? (
+                    <span className="journal-discuss-item-badge">{t('journal.discussMatchedBadge')}</span>
+                  ) : option.kind === 'desk' ? (
+                    <span className="journal-discuss-item-badge">{t('journal.discussDefaultBadge')}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       ) : null}
       <button
         type="button"
