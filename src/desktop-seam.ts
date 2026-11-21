@@ -142,6 +142,9 @@ export const DESKTOP_INVOKE_CHANNELS = {
   syncLegacySentinelLabJournal: 'desktop:journal:sync-legacy',
   watchJournal: 'desktop:journal:watch',
   unwatchJournal: 'desktop:journal:unwatch',
+  getFeishuJournalBridgeStatus: 'desktop:journal:feishu:get-status',
+  saveFeishuJournalBridgeConfig: 'desktop:journal:feishu:save-config',
+  reconnectFeishuJournalBridge: 'desktop:journal:feishu:reconnect',
 } as const satisfies Record<DesktopInvokeCapability, string>
 
 export const DESKTOP_EVENT_CHANNELS = {
@@ -155,6 +158,7 @@ export const DESKTOP_EVENT_CHANNELS = {
   onRuntimeDevelopmentEvent: 'desktop:runtime-development:event',
   onRuntimePreviewNavigationState: 'desktop:runtime-preview:navigation-state-changed',
   onJournalChanged: 'desktop:journal-changed',
+  onFeishuJournalBridgeStatus: 'desktop:journal:feishu-status-changed',
 } as const satisfies Record<DesktopEventCapability, string>
 
 export const DESKTOP_SEAM_CAPABILITIES = [

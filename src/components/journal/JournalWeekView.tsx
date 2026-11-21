@@ -9,6 +9,7 @@ import {
   formatCalendarDayNumber,
   formatShortWeekday,
   getJournalCategorySlug,
+  sliceWeekDayEntries,
   summarizeEntrySnippet,
 } from './journal-ui-helpers'
 
@@ -35,6 +36,7 @@ export function JournalWeekView({
         const isSelected = day.date === selectedDate
         const isToday = day.date === todayDate
         const count = day.entries.length
+        const { visible: visibleEntries, overflowCount } = sliceWeekDayEntries(day.entries)
         return (
           <section
             key={day.date}
@@ -66,46 +68,57 @@ export function JournalWeekView({
                   {t('journal.weekDayEmpty')}
                 </button>
               ) : (
-                day.entries.map((entry) => {
-                  const thumb = entry.images[0] ? imageCache[entry.images[0].relativePath] : undefined
-                  const snippet = summarizeEntrySnippet(
-                    entry.momentTitle || entry.body,
-                    44,
-                  )
-                  return (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      className={`journal-week-item${entry.kind === 'ai' ? ' is-ai' : ''}`}
-                      onClick={() => onSelectDay(day.date)}
-                    >
-                      <div className="journal-week-item-meta">
-                        <span className="journal-week-item-time">{entry.time}</span>
-                        <span
-                          className={`journal-week-cat-dot journal-cat-dot--${getJournalCategorySlug(entry.category)}`}
-                          title={entry.category}
-                        />
-                      </div>
-                      {thumb ? (
-                        <div className="journal-week-item-thumb-wrap">
-                          <img
-                            src={thumb}
-                            alt={entry.images[0]?.caption || entry.images[0]?.fileName || ''}
-                            className="journal-week-item-thumb"
-                            loading="lazy"
+                <>
+                  {visibleEntries.map((entry) => {
+                    const thumb = entry.images[0] ? imageCache[entry.images[0].relativePath] : undefined
+                    const snippet = summarizeEntrySnippet(
+                      entry.momentTitle || entry.body,
+                      44,
+                    )
+                    return (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        className={`journal-week-item${entry.kind === 'ai' ? ' is-ai' : ''}`}
+                        onClick={() => onSelectDay(day.date)}
+                      >
+                        <div className="journal-week-item-meta">
+                          <span className="journal-week-item-time">{entry.time}</span>
+                          <span
+                            className={`journal-week-cat-dot journal-cat-dot--${getJournalCategorySlug(entry.category)}`}
+                            title={entry.category}
                           />
                         </div>
-                      ) : null}
-                      {snippet ? (
-                        <p className="journal-week-item-text">{snippet}</p>
-                      ) : entry.images.length > 0 ? (
-                        <p className="journal-week-item-text">
-                          {t('journal.photoCount', { n: entry.images.length })}
-                        </p>
-                      ) : null}
+                        {thumb ? (
+                          <div className="journal-week-item-thumb-wrap">
+                            <img
+                              src={thumb}
+                              alt={entry.images[0]?.caption || entry.images[0]?.fileName || ''}
+                              className="journal-week-item-thumb"
+                              loading="lazy"
+                            />
+                          </div>
+                        ) : null}
+                        {snippet ? (
+                          <p className="journal-week-item-text">{snippet}</p>
+                        ) : entry.images.length > 0 ? (
+                          <p className="journal-week-item-text">
+                            {t('journal.photoCount', { n: entry.images.length })}
+                          </p>
+                        ) : null}
+                      </button>
+                    )
+                  })}
+                  {overflowCount > 0 ? (
+                    <button
+                      type="button"
+                      className="journal-week-more-btn"
+                      onClick={() => onSelectDay(day.date)}
+                    >
+                      {t('journal.weekDayViewMore', { n: overflowCount })}
                     </button>
-                  )
-                })
+                  ) : null}
+                </>
               )}
             </div>
           </section>

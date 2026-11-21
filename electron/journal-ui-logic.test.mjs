@@ -253,3 +253,285 @@ test('journal-ui-helpers builds explicit discuss targets prioritizing SentinelDe
   assert.equal(linkedOptions[0].matched, true)
   assert.equal(linkedOptions[1].kind, 'desk')
 })
+
+
+test('journal-ui-helpers computes Monday-first 6x7 month calendar grid, month shifts, and month activity summaries', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  // 2026-11-01 is a Sunday -> Monday-first grid starts on 2026-10-26
+  const nov2026 = helpers.getMonthCalendarGrid(2026, 11)
+  assert.equal(nov2026.length, 42)
+  assert.deepEqual(nov2026[0], { date: '2026-10-26', day: 26, inCurrentMonth: false })
+  assert.deepEqual(nov2026[6], { date: '2026-11-01', day: 1, inCurrentMonth: true })
+  assert.deepEqual(nov2026[35], { date: '2026-11-30', day: 30, inCurrentMonth: true })
+  assert.deepEqual(nov2026[36], { date: '2026-12-01', day: 1, inCurrentMonth: false })
+
+  // Leap year Feb 2024 has 29 days; 2024-02-01 is Thursday -> starts on 2024-01-29
+  const feb2024 = helpers.getMonthCalendarGrid(2024, 2)
+  assert.equal(feb2024.length, 42)
+  assert.deepEqual(feb2024[0], { date: '2024-01-29', day: 29, inCurrentMonth: false })
+  assert.equal(feb2024.filter((c) => c.inCurrentMonth).length, 29)
+
+  // Year boundary month shifts
+  assert.deepEqual(helpers.shiftYearMonth(2026, 1, -1), { year: 2025, month: 12 })
+  assert.deepEqual(helpers.shiftYearMonth(2026, 12, 1), { year: 2027, month: 1 })
+  assert.deepEqual(helpers.shiftYearMonth(2026, 11, -14), { year: 2025, month: 9 })
+
+  // Month activity aggregation ignores zero-count days
+  const monthStats = helpers.summarizeJournalMonths([
+    { date: '2026-11-20', count: 3, hasImages: true, hasFeishu: true, hasAi: false },
+    { date: '2026-11-18', count: 2, hasImages: false, hasFeishu: false, hasAi: false },
+    { date: '2026-11-01', count: 0, hasImages: false, hasFeishu: false, hasAi: false },
+    { date: '2026-09-05', count: 4, hasImages: false, hasFeishu: true, hasAi: false },
+  ])
+  assert.deepEqual(monthStats.get('2026-11'), { daysCount: 2, entriesCount: 5 })
+  assert.deepEqual(monthStats.get('2026-09'), { daysCount: 1, entriesCount: 4 })
+  assert.equal(monthStats.get('2026-10'), undefined)
+})
+
+test('planJournalDayLayout pairs note+short (8/4 compact) and photo+note (5/7) preserving entry order', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  const makeEntry = (overrides) => ({
+    id: 'je_base',
+    date: '2026-11-21',
+    time: '12:00',
+    ts: '2026-11-21T12:00:00.000+08:00',
+    kind: 'note',
+    body: '',
+    category: '未归类',
+    tags: [],
+    projectRefs: [],
+    source: 'feishu',
+    provenance: 'human',
+    images: [],
+    ...overrides,
+  })
+
+  // Exact scenario from the right screenshot:
+  // 12:34 long note, 13:27 short text, 13:28 photo, 13:45 long note
+  const entries = [
+    makeEntry({
+      id: 'e1',
+      time: '12:34',
+      ts: '2026-11-21T12:34:00.000+08:00',
+      body: '刚才已经打开的agentos软件崩溃了。在实现新功能的同时记得检查回归测试。1、你帮我停用；2、你帮我在egolite浏览器里面确认有没有添加，我找不到。3、等你完成打开后我会测试。',
+    }),
+    makeEntry({
+      id: 'e2',
+      time: '13:27',
+      ts: '2026-11-21T13:27:00.000+08:00',
+      body: 'hello, can you hear me',
+    }),
+    makeEntry({
+      id: 'e3',
+      time: '13:28',
+      ts: '2026-11-21T13:28:00.000+08:00',
+      body: '',
+      images: [{ relativePath: 'attachments/2026/11/park.jpg', fileName: 'park.jpg', mimeType: 'image/jpeg' }],
+    }),
+    makeEntry({
+      id: 'e4',
+      time: '13:45',
+      ts: '2026-11-21T13:45:00.000+08:00',
+      body: '测试成功了，暂时没有任何异常。接下来我想探讨一下关于日记隐私的问题。像这种挂载在 Agent OS 上面的时间日记软件，会有私人信息上传到服务器或者第三方吗？',
+    }),
+  ]
+
+  const layout = helpers.planJournalDayLayout(entries)
+  assert.equal(layout.length, 4)
+  assert.deepEqual(
+    layout.map((item) => ({
+      id: item.entry.id,
+      groupKind: item.groupKind,
+      colStart: item.colStart,
+      colSpan: item.colSpan,
+      rowStart: item.rowStart,
+      rowSpan: item.rowSpan,
+      presentation: item.presentation,
+    })),
+    [
+      { id: 'e1', groupKind: 'pair-note-short', colStart: 1, colSpan: 8, rowStart: 1, rowSpan: 1, presentation: 'default' },
+      { id: 'e2', groupKind: 'pair-note-short', colStart: 9, colSpan: 4, rowStart: 1, rowSpan: 1, presentation: 'compact-thought' },
+      { id: 'e3', groupKind: 'pair-photo-note', colStart: 1, colSpan: 5, rowStart: 2, rowSpan: 1, presentation: 'default' },
+      { id: 'e4', groupKind: 'pair-photo-note', colStart: 6, colSpan: 7, rowStart: 2, rowSpan: 1, presentation: 'default' },
+    ],
+  )
+  // Entry raw kind must remain untouched
+  assert.equal(entries[1].kind, 'note')
+})
+
+test('planJournalDayLayout builds 4-entry photo-span quad and respects AI boundaries', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  const makeEntry = (overrides) => ({
+    id: 'je_base',
+    date: '2026-11-18',
+    time: '06:00',
+    ts: '2026-11-18T06:00:00.000+08:00',
+    kind: 'note',
+    body: '',
+    category: '学习',
+    tags: [],
+    projectRefs: [],
+    source: 'local',
+    provenance: 'human',
+    images: [],
+    ...overrides,
+  })
+
+  const entries = [
+    makeEntry({
+      id: 'q1',
+      time: '06:51',
+      ts: '2026-11-18T06:51:00.000+08:00',
+      body: '爬山 800 米。在思考 agent os 的规划，吸取 seven 的设计灵感：分清楚什么是需求、什么是反馈；场景激活；采访模式。',
+      tags: ['agent os', '需求 vs 反馈', '采访模式'],
+    }),
+    makeEntry({
+      id: 'q2',
+      time: '06:31',
+      ts: '2026-11-18T06:31:00.000+08:00',
+      kind: 'photo',
+      category: '身体',
+      body: '到顶了，山下全是云。',
+      images: [{ relativePath: 'attachments/2026/11/cloud.jpg', fileName: 'cloud.jpg', mimeType: 'image/jpeg' }],
+    }),
+    makeEntry({
+      id: 'q3',
+      time: '06:08',
+      ts: '2026-11-18T06:08:00.000+08:00',
+      kind: 'moment',
+      momentTitle: '单曲循环',
+      momentSubtitle: '恰逢那年你明媚 · 陈与默',
+      body: '单曲循环',
+    }),
+    makeEntry({
+      id: 'q4',
+      time: '05:40',
+      ts: '2026-11-18T05:40:00.000+08:00',
+      kind: 'thought',
+      category: '事务',
+      body: '搞定了 VPS 的密钥登录，废除了密码登录。',
+      relatedNote: '与周一的密钥整理有关',
+    }),
+    makeEntry({
+      id: 'ai1',
+      time: '07:30',
+      ts: '2026-11-18T07:30:00.000+08:00',
+      kind: 'ai',
+      body: '每日摘要',
+    }),
+  ]
+
+  const layout = helpers.planJournalDayLayout(entries)
+  assert.deepEqual(
+    layout.map((item) => ({
+      id: item.entry.id,
+      groupKind: item.groupKind,
+      colStart: item.colStart,
+      colSpan: item.colSpan,
+      rowStart: item.rowStart,
+      rowSpan: item.rowSpan,
+      presentation: item.presentation,
+    })),
+    [
+      { id: 'q1', groupKind: 'quad-photo-right', colStart: 1, colSpan: 7, rowStart: 1, rowSpan: 1, presentation: 'default' },
+      { id: 'q2', groupKind: 'quad-photo-right', colStart: 8, colSpan: 5, rowStart: 1, rowSpan: 2, presentation: 'default' },
+      { id: 'q3', groupKind: 'quad-photo-right', colStart: 1, colSpan: 3, rowStart: 2, rowSpan: 1, presentation: 'default' },
+      { id: 'q4', groupKind: 'quad-photo-right', colStart: 4, colSpan: 4, rowStart: 2, rowSpan: 1, presentation: 'compact-thought' },
+      { id: 'ai1', groupKind: 'ai-boundary', colStart: 1, colSpan: 12, rowStart: 3, rowSpan: 1, presentation: 'default' },
+    ],
+  )
+})
+
+test('planJournalDayLayout falls back to 2-entry layout on chronological jump or unsuitable heights', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  const makeEntry = (overrides) => ({
+    id: 'je_base',
+    date: '2026-11-21',
+    time: '09:00',
+    ts: '2026-11-21T09:00:00.000+08:00',
+    kind: 'note',
+    body: '',
+    category: '学习',
+    tags: [],
+    projectRefs: [],
+    source: 'local',
+    provenance: 'human',
+    images: [],
+    ...overrides,
+  })
+
+  const shortNote = (id, time, body) =>
+    makeEntry({ id, time, ts: `2026-11-21T${time}:00.000+08:00`, body })
+
+  const photo = (id, time, count = 1, body = '一张风景') =>
+    makeEntry({
+      id,
+      time,
+      ts: `2026-11-21T${time}:00.000+08:00`,
+      kind: 'photo',
+      body,
+      images: Array.from({ length: count }, (_, idx) => ({
+        relativePath: `attachments/2026/11/p${idx}.jpg`,
+        fileName: `p${idx}.jpg`,
+        mimeType: 'image/jpeg',
+      })),
+    })
+
+  // Case 1: Non-monotonic timestamps -> falls back from quad to pair-photo-note
+  const nonMonotonic = [
+    makeEntry({
+      id: 'nm1',
+      time: '09:00',
+      ts: '2026-11-21T09:00:00.000+08:00',
+      body: '这是一段长度适中的长笔记，用于测试时间跳序时应该退回到双条目布局而不是强行拼成四条目。',
+    }),
+    photo('nm2', '09:30'),
+    shortNote('nm3', '09:10', '短句一'),
+    shortNote('nm4', '09:20', '短句二'),
+  ]
+  const nmLayout = helpers.planJournalDayLayout(nonMonotonic)
+  assert.equal(nmLayout[0].groupKind, 'pair-photo-note')
+  assert.equal(nmLayout[1].groupKind, 'pair-photo-note')
+  assert.equal(nmLayout[1].rowSpan, 1)
+
+  // Case 2: Overly long note (> 180 chars) -> height unsuitable -> falls back to pair-photo-note
+  const tooTallNote = [
+    makeEntry({
+      id: 'ht1',
+      time: '09:00',
+      ts: '2026-11-21T09:00:00.000+08:00',
+      body: '很长的复盘记录。'.repeat(30),
+    }),
+    photo('ht2', '09:10'),
+    shortNote('ht3', '09:20', '短句一'),
+    shortNote('ht4', '09:30', '短句二'),
+  ]
+  const htLayout = helpers.planJournalDayLayout(tooTallNote)
+  assert.equal(htLayout[0].groupKind, 'pair-photo-note')
+  assert.equal(htLayout[1].rowSpan, 1)
+
+  // Case 3: Multi-line text with 3+ lines is not treated as compact short record
+  const multiLine = makeEntry({
+    id: 'ml1',
+    body: '第一行\n第二行\n第三行',
+  })
+  assert.equal(helpers.isCompactShortEntry(multiLine), false)
+})
+
+test('sliceWeekDayEntries caps visible week-column items to 12 and reports overflow count', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+  assert.equal(helpers.WEEK_VIEW_MAX_VISIBLE_ENTRIES, 12)
+
+  const twelve = Array.from({ length: 12 }, (_, idx) => idx)
+  assert.deepEqual(helpers.sliceWeekDayEntries(twelve), { visible: twelve, overflowCount: 0 })
+
+  const fifteen = Array.from({ length: 15 }, (_, idx) => idx)
+  assert.deepEqual(helpers.sliceWeekDayEntries(fifteen), {
+    visible: twelve,
+    overflowCount: 3,
+  })
+})

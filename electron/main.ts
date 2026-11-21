@@ -39,6 +39,7 @@ import { createProjectChatBrokerRunnerAdapter, createProjectChatScopedReadCollab
 import { ProjectChatPresenceRegistry } from './project-chat-presence'
 import { ProjectChatWindowManager } from './project-chat-window-manager'
 import { JournalStore } from './desk/journal-store'
+import { FeishuJournalBridgeService } from './desk/feishu-journal-bridge'
 import { syncLegacySentinelLabJournal } from './desk/legacy-sync'
 import { ProjectChatViewStateStore } from './project-chat-view-state-store'
 import { RuntimePreviewLayoutStore } from './runtime-preview-layout-store'
@@ -211,6 +212,7 @@ let localAppRuntimeManager: LocalAppRuntimeManager | null = null
 let runtimeEditCoordinator: RuntimeEditCoordinator | null = null
 let runtimeEditRuntimeBridge: RuntimeEditRuntimeBridge | null = null
 let journalStore: JournalStore | null = null
+let feishuJournalBridge: FeishuJournalBridgeService | null = null
 
 function getJournalStore(): JournalStore {
   if (!journalStore) {
@@ -223,6 +225,21 @@ function getJournalStore(): JournalStore {
     })
   }
   return journalStore
+}
+
+function getFeishuJournalBridge(): FeishuJournalBridgeService {
+  if (!feishuJournalBridge) {
+    feishuJournalBridge = new FeishuJournalBridgeService({
+      userDataPath: app.getPath('userData'),
+      journalStore: getJournalStore(),
+      onStatusChange: (status) => {
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(DESKTOP_EVENT_CHANNELS.onFeishuJournalBridgeStatus, status)
+        }
+      },
+    })
+  }
+  return feishuJournalBridge
 }
 let projectRuntimePlacementTracker: ProjectRuntimePlacementTracker | null = null
 let localAppTrustStore: LocalAppTrustStore | null = null
@@ -1347,6 +1364,7 @@ async function prepareForAppQuit(): Promise<void> {
       ]),
       new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
     ])
+    feishuJournalBridge?.dispose()
     projectRuntimeHosts.clear()
     tray?.destroy()
     tray = null
@@ -2803,7 +2821,11 @@ if (gotSingleInstanceLock) {
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.syncLegacySentinelLabJournal, (_event, options?: unknown) => syncLegacySentinelLabJournal(getJournalStore(), options as any))
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.watchJournal, () => getJournalStore().watch())
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.unwatchJournal, () => getJournalStore().unwatch())
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getFeishuJournalBridgeStatus, () => getFeishuJournalBridge().getStatus())
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveFeishuJournalBridgeConfig, (_event, update: unknown) => getFeishuJournalBridge().updateConfig((update ?? {}) as any))
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.reconnectFeishuJournalBridge, () => getFeishuJournalBridge().reconnect())
     createWindow()
+    void getFeishuJournalBridge().startIfEnabled().catch(() => undefined)
     initializeAgentOSExternalTasks()
     ensureTray()
     appUpdaterService.scheduleUpdateChecks()

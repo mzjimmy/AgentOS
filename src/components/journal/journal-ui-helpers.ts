@@ -24,6 +24,8 @@ import {
   type LegacyJournalSyncResult,
   type UpdateJournalEntryInput,
   type UpdateJournalEntryResult,
+  type FeishuBridgeConfigUpdate,
+  type FeishuBridgeStatus,
 } from '../../journal-contract'
 
 export type JournalDesktopApi = {
@@ -40,6 +42,10 @@ export type JournalDesktopApi = {
   watchJournal?: () => Promise<{ ok: boolean }>
   unwatchJournal?: () => Promise<{ ok: boolean }>
   onJournalChanged?: (listener: (event: JournalChangedEvent) => void) => () => void
+  getFeishuJournalBridgeStatus?: () => Promise<FeishuBridgeStatus>
+  saveFeishuJournalBridgeConfig?: (update: FeishuBridgeConfigUpdate) => Promise<FeishuBridgeStatus>
+  reconnectFeishuJournalBridge?: () => Promise<FeishuBridgeStatus>
+  onFeishuJournalBridgeStatus?: (listener: (status: FeishuBridgeStatus) => void) => () => void
 }
 
 export function getJournalDesktopApi(): JournalDesktopApi | undefined {
@@ -69,8 +75,12 @@ function pad2(value: number): string {
 function parseDateParts(dateStr: string): { year: number; month: number; day: number } {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim())
   if (!match) {
-    const now = new Date()
-    return { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() }
+    const shanghai = formatShanghaiParts(new Date())
+    return {
+      year: Number(shanghai.year),
+      month: Number(shanghai.month),
+      day: Number(shanghai.day),
+    }
   }
   return {
     year: Number(match[1]),
@@ -164,6 +174,73 @@ export function formatShortWeekday(dateStr: string, locale: 'zh' | 'en' | string
   return locale === 'en' ? EN_SHORT_WEEKDAYS[dayIndex] : ZH_SHORT_WEEKDAYS[dayIndex]
 }
 
+export type JournalCalendarCell = {
+  date: string
+  day: number
+  inCurrentMonth: boolean
+}
+
+export type JournalMonthActivity = {
+  daysCount: number
+  entriesCount: number
+}
+
+export function getJournalDateParts(dateStr: string): { year: number; month: number; day: number } {
+  return parseDateParts(dateStr)
+}
+
+/** Shifts `{ year, month }` (1-based month) by `deltaMonths` cleanly across year boundaries. */
+export function shiftYearMonth(
+  year: number,
+  month: number,
+  deltaMonths: number,
+): { year: number; month: number } {
+  const zeroBased = year * 12 + (month - 1) + deltaMonths
+  const nextYear = Math.floor(zeroBased / 12)
+  const nextMonth = ((zeroBased % 12) + 12) % 12 + 1
+  return { year: nextYear, month: nextMonth }
+}
+
+/** Returns a Monday-first 6x7 (42-cell) calendar grid for the given 1-based `year` and `month`. */
+export function getMonthCalendarGrid(year: number, month: number): JournalCalendarCell[] {
+  const firstDayStr = `${year}-${pad2(month)}-01`
+  const firstDayUtc = toUtcNoon(firstDayStr)
+  const dayOfWeek = firstDayUtc.getUTCDay() // 0 (Sun) .. 6 (Sat)
+  const offsetToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+  const gridStart = shiftDateString(firstDayStr, offsetToMonday)
+  const targetPrefix = `${year}-${pad2(month)}-`
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = shiftDateString(gridStart, index)
+    const parts = parseDateParts(date)
+    return {
+      date,
+      day: parts.day,
+      inCurrentMonth: date.startsWith(targetPrefix),
+    }
+  })
+}
+
+/** Aggregates `JournalDaySummary[]` into `YYYY-MM` -> `{ daysCount, entriesCount }`. */
+export function summarizeJournalMonths(
+  days: JournalDaySummary[],
+): Map<string, JournalMonthActivity> {
+  const result = new Map<string, JournalMonthActivity>()
+  for (const item of days) {
+    if (!item || typeof item.date !== 'string' || item.count <= 0) continue
+    const ym = item.date.slice(0, 7)
+    if (!/^\d{4}-\d{2}$/.test(ym)) continue
+    const prev = result.get(ym)
+    if (prev) {
+      prev.daysCount += 1
+      prev.entriesCount += item.count
+    } else {
+      result.set(ym, { daysCount: 1, entriesCount: item.count })
+    }
+  }
+  return result
+}
+
 /**
  * Resolves the effective visual species for an entry:
  * - Explicit `ai`, `judgment`, `moment`, `thought`, `photo` stay as specified.
@@ -209,6 +286,324 @@ export function classifyJournalCardSpan(entry: JournalEntry, index: number): num
   if (textLen >= 55) return 7
   if (textLen >= 25) return 6
   return 5
+}
+
+export type JournalLayoutGroupKind =
+  | 'quad-photo-right'
+  | 'pair-photo-note'
+  | 'pair-note-short'
+  | 'ai-boundary'
+  | 'single'
+
+export type JournalCardPresentation = 'default' | 'compact-thought'
+
+export type JournalDayLayoutItem = {
+  entry: JournalEntry
+  index: number
+  groupKind: JournalLayoutGroupKind
+  colStart: number
+  colSpan: number
+  rowStart: number
+  rowSpan: number
+  presentation: JournalCardPresentation
+}
+
+function countTextLines(text: string): number {
+  const trimmed = text.trim()
+  if (!trimmed) return 0
+  return trimmed.split(/\r?\n/).length
+}
+
+function getEntryChronoValue(entry: Pick<JournalEntry, 'ts' | 'time'>): number | null {
+  if (entry.ts) {
+    const parsed = Date.parse(entry.ts)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  const timeMatch = /^(\d{1,2}):(\d{2})$/.exec(entry.time?.trim() ?? '')
+  if (timeMatch) {
+    return Number(timeMatch[1]) * 60 + Number(timeMatch[2])
+  }
+  return null
+}
+
+function isChronologicallyMonotonic(entries: ReadonlyArray<Pick<JournalEntry, 'ts' | 'time'>>): boolean {
+  const values = entries.map(getEntryChronoValue)
+  if (values.some((v) => v === null)) return true
+  const nums = values as number[]
+  let nonDecreasing = true
+  let nonIncreasing = true
+  for (let i = 1; i < nums.length; i += 1) {
+    if (nums[i] < nums[i - 1]) nonDecreasing = false
+    if (nums[i] > nums[i - 1]) nonIncreasing = false
+  }
+  return nonDecreasing || nonIncreasing
+}
+
+/**
+ * Determines whether an entry qualifies as a compact short record for day-view grouping.
+ * Reuses existing length thresholds while also guarding against multi-line bodies, images, and heavy metadata.
+ */
+export function isCompactShortEntry(entry: JournalEntry): boolean {
+  const species = resolveEffectiveCardKind(entry)
+  if (species === 'ai' || species === 'photo') return false
+  if (entry.images.length > 0) return false
+
+  const trimmed = entry.body.trim()
+  const textLen = trimmed.length
+  const lineCount = countTextLines(trimmed)
+  if (lineCount > 2) return false
+  if (entry.tags.length + entry.projectRefs.length > 2) return false
+
+  if (species === 'moment' || species === 'judgment') {
+    return textLen <= 45
+  }
+  if (species === 'thought' || species === 'note') {
+    return textLen <= 40
+  }
+  return false
+}
+
+function isLongNoteEntry(entry: JournalEntry): boolean {
+  return resolveEffectiveCardKind(entry) === 'note' && !isCompactShortEntry(entry)
+}
+
+function isPhotoEntry(entry: JournalEntry): boolean {
+  return resolveEffectiveCardKind(entry) === 'photo'
+}
+
+function canUseCompactThoughtStyle(entry: JournalEntry): boolean {
+  const species = resolveEffectiveCardKind(entry)
+  return (species === 'note' || species === 'thought') && entry.images.length === 0
+}
+
+function canFormQuadPhotoRight(entries: readonly JournalEntry[], startIndex: number): boolean {
+  if (startIndex + 3 >= entries.length) return false
+  const e0 = entries[startIndex]
+  const e1 = entries[startIndex + 1]
+  const e2 = entries[startIndex + 2]
+  const e3 = entries[startIndex + 3]
+
+  // Natural reading order of the 4-entry bento block is:
+  // top-left (longNote) -> right 2-row photo -> bottom-left (short 3 cols) -> bottom-middle (short 4 cols).
+  // Any other permutation would visually jump reading order, so it falls back to 2-entry rules.
+  if (!isLongNoteEntry(e0) || !isPhotoEntry(e1) || !isCompactShortEntry(e2) || !isCompactShortEntry(e3)) {
+    return false
+  }
+
+  // Verify chronological monotonicity in natural reading order.
+  if (!isChronologicallyMonotonic([e0, e1, e2, e3])) {
+    return false
+  }
+
+  // Height balance guards:
+  // - Photo on the right spans 2 rows best when it has a single image and a concise caption.
+  // - Top-left long note should not be so tall that row 1 alone dwarfs the right photo.
+  const noteTrimmed = e0.body.trim()
+  if (e0.images.length > 0 || noteTrimmed.length > 180 || countTextLines(noteTrimmed) > 4) {
+    return false
+  }
+  const photoTrimmed = e1.body.trim()
+  if (e1.images.length !== 1 || photoTrimmed.length > 90 || countTextLines(photoTrimmed) > 3) {
+    return false
+  }
+
+  return true
+}
+
+/**
+ * Plans the 12-column day-view layout for consecutive visible entries by selecting
+ * group layouts first (4-entry photo-span quad, 2-entry photo+note, 2-entry note+short,
+ * AI full-width boundary, or single fallback) and assigning explicit column/row coordinates.
+ */
+export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalDayLayoutItem[] {
+  const items: JournalDayLayoutItem[] = []
+  let i = 0
+  let currentRow = 1
+  let pendingRowCol = 1
+
+  const flushPendingRow = () => {
+    if (pendingRowCol > 1) {
+      currentRow += 1
+      pendingRowCol = 1
+    }
+  }
+
+  while (i < entries.length) {
+    const current = entries[i]
+    const currentSpecies = resolveEffectiveCardKind(current)
+
+    // AI summary is always full-width and acts as a hard group boundary.
+    if (currentSpecies === 'ai') {
+      flushPendingRow()
+      items.push({
+        entry: current,
+        index: i,
+        groupKind: 'ai-boundary',
+        colStart: 1,
+        colSpan: 12,
+        rowStart: currentRow,
+        rowSpan: 1,
+        presentation: 'default',
+      })
+      currentRow += 1
+      i += 1
+      continue
+    }
+
+    // Priority 1: [longNote, photo, short, short] -> 7/5(2-row)/3/4 bento quad
+    if (canFormQuadPhotoRight(entries, i)) {
+      flushPendingRow()
+      const e0 = entries[i]
+      const e1 = entries[i + 1]
+      const e2 = entries[i + 2]
+      const e3 = entries[i + 3]
+
+      items.push(
+        {
+          entry: e0,
+          index: i,
+          groupKind: 'quad-photo-right',
+          colStart: 1,
+          colSpan: 7,
+          rowStart: currentRow,
+          rowSpan: 1,
+          presentation: 'default',
+        },
+        {
+          entry: e1,
+          index: i + 1,
+          groupKind: 'quad-photo-right',
+          colStart: 8,
+          colSpan: 5,
+          rowStart: currentRow,
+          rowSpan: 2,
+          presentation: 'default',
+        },
+        {
+          entry: e2,
+          index: i + 2,
+          groupKind: 'quad-photo-right',
+          colStart: 1,
+          colSpan: 3,
+          rowStart: currentRow + 1,
+          rowSpan: 1,
+          presentation: canUseCompactThoughtStyle(e2) ? 'compact-thought' : 'default',
+        },
+        {
+          entry: e3,
+          index: i + 3,
+          groupKind: 'quad-photo-right',
+          colStart: 4,
+          colSpan: 4,
+          rowStart: currentRow + 1,
+          rowSpan: 1,
+          presentation: canUseCompactThoughtStyle(e3) ? 'compact-thought' : 'default',
+        },
+      )
+
+      currentRow += 2
+      i += 4
+      continue
+    }
+
+    // Priority 2: [photo, longNote] or [longNote, photo] -> 5/7 or 7/5 in original order
+    if (i + 1 < entries.length) {
+      const next = entries[i + 1]
+      const isPhotoThenNote = isPhotoEntry(current) && isLongNoteEntry(next)
+      const isNoteThenPhoto = isLongNoteEntry(current) && isPhotoEntry(next)
+      if (isPhotoThenNote || isNoteThenPhoto) {
+        flushPendingRow()
+        const firstSpan = isPhotoThenNote ? 5 : 7
+        const secondSpan = isPhotoThenNote ? 7 : 5
+        items.push(
+          {
+            entry: current,
+            index: i,
+            groupKind: 'pair-photo-note',
+            colStart: 1,
+            colSpan: firstSpan,
+            rowStart: currentRow,
+            rowSpan: 1,
+            presentation: 'default',
+          },
+          {
+            entry: next,
+            index: i + 1,
+            groupKind: 'pair-photo-note',
+            colStart: firstSpan + 1,
+            colSpan: secondSpan,
+            rowStart: currentRow,
+            rowSpan: 1,
+            presentation: 'default',
+          },
+        )
+        currentRow += 1
+        i += 2
+        continue
+      }
+
+      // Priority 3: [longNote, short] or [short, longNote] -> 8/4 or 4/8 in original order
+      const isNoteThenShort = isLongNoteEntry(current) && isCompactShortEntry(next)
+      const isShortThenNote = isCompactShortEntry(current) && isLongNoteEntry(next)
+      if (isNoteThenShort || isShortThenNote) {
+        flushPendingRow()
+        const firstSpan = isNoteThenShort ? 8 : 4
+        const secondSpan = isNoteThenShort ? 4 : 8
+        items.push(
+          {
+            entry: current,
+            index: i,
+            groupKind: 'pair-note-short',
+            colStart: 1,
+            colSpan: firstSpan,
+            rowStart: currentRow,
+            rowSpan: 1,
+            presentation:
+              isShortThenNote && canUseCompactThoughtStyle(current) ? 'compact-thought' : 'default',
+          },
+          {
+            entry: next,
+            index: i + 1,
+            groupKind: 'pair-note-short',
+            colStart: firstSpan + 1,
+            colSpan: secondSpan,
+            rowStart: currentRow,
+            rowSpan: 1,
+            presentation:
+              isNoteThenShort && canUseCompactThoughtStyle(next) ? 'compact-thought' : 'default',
+          },
+        )
+        currentRow += 1
+        i += 2
+        continue
+      }
+    }
+
+    // Priority 4: Remaining entries use existing single-card span rules in strict order (no dense backfill).
+    const span = classifyJournalCardSpan(current, i)
+    if (pendingRowCol + span - 1 > 12) {
+      currentRow += 1
+      pendingRowCol = 1
+    }
+    items.push({
+      entry: current,
+      index: i,
+      groupKind: 'single',
+      colStart: pendingRowCol,
+      colSpan: span,
+      rowStart: currentRow,
+      rowSpan: 1,
+      presentation: 'default',
+    })
+    pendingRowCol += span
+    if (pendingRowCol > 12) {
+      currentRow += 1
+      pendingRowCol = 1
+    }
+    i += 1
+  }
+
+  return items
 }
 
 /** Extracts unique `#tag` and `@project` tokens from composer input while ignoring URL `#` fragments. */
@@ -263,6 +658,22 @@ export function getNextJournalCategory(current: JournalCategory): JournalCategor
 export function stepLightboxIndex(current: number, total: number, delta: -1 | 1): number {
   if (total <= 0) return 0
   return (current + delta + total) % total
+}
+
+export const WEEK_VIEW_MAX_VISIBLE_ENTRIES = 12
+
+export function sliceWeekDayEntries<T>(
+  entries: readonly T[],
+  maxVisible = WEEK_VIEW_MAX_VISIBLE_ENTRIES,
+): { visible: T[]; overflowCount: number } {
+  const limit = Math.max(0, maxVisible)
+  if (entries.length <= limit) {
+    return { visible: [...entries], overflowCount: 0 }
+  }
+  return {
+    visible: entries.slice(0, limit),
+    overflowCount: entries.length - limit,
+  }
 }
 
 export function summarizeEntrySnippet(body: string, maxLength = 48): string {

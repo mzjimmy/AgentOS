@@ -42,6 +42,7 @@
     "@a2ui/react": "^0.10.0",
     "@a2ui/web_core": "^0.10.0",
     "@anthropic-ai/claude-agent-sdk": "^0.3.142",
+    "@larksuiteoapi/node-sdk": "^1.76.0",
     "dompurify": "^3.4.3",
     "electron-updater": "^6.6.2",
     "katex": "^0.17.0",

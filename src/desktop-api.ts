@@ -43,6 +43,8 @@ import type {
   LegacyJournalSyncOptions,
   LegacyJournalSyncResult,
   JournalChangedEvent,
+  FeishuBridgeConfigUpdate,
+  FeishuBridgeStatus,
 } from './journal-contract'
 import type {
   AgentModeFilesResult,
@@ -374,6 +376,10 @@ export type DesktopAPI = {
   watchJournal?: () => Promise<{ ok: boolean }>
   unwatchJournal?: () => Promise<{ ok: boolean }>
   onJournalChanged?: (listener: (event: JournalChangedEvent) => void) => () => void
+  getFeishuJournalBridgeStatus?: () => Promise<FeishuBridgeStatus>
+  saveFeishuJournalBridgeConfig?: (update: FeishuBridgeConfigUpdate) => Promise<FeishuBridgeStatus>
+  reconnectFeishuJournalBridge?: () => Promise<FeishuBridgeStatus>
+  onFeishuJournalBridgeStatus?: (listener: (status: FeishuBridgeStatus) => void) => () => void
 }
 
 export type {
@@ -390,5 +396,7 @@ export type {
   LegacyJournalSyncOptions,
   LegacyJournalSyncResult,
   JournalChangedEvent,
+  FeishuBridgeConfigUpdate,
+  FeishuBridgeStatus,
 } from './journal-contract'
 

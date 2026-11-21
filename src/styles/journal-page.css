@@ -126,6 +126,8 @@
 /* --- Top Calendar Strip --- */
 
 .journal-topbar {
+  position: relative;
+  z-index: 50;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -323,6 +325,8 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
 .journal-canvas-inner {
   max-width: 980px;
   margin: 0 auto;
+  container-type: inline-size;
+  container-name: journal-day;
 }
 
 .journal-hero {
@@ -459,11 +463,12 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
 .journal-bento-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-auto-flow: dense;
+  grid-auto-flow: row;
   gap: 18px;
   align-items: start;
 }
 
+.journal-span-3 { grid-column: span 3; }
 .journal-span-4 { grid-column: span 4; }
 .journal-span-5 { grid-column: span 5; }
 .journal-span-6 { grid-column: span 6; }
@@ -471,22 +476,47 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
 .journal-span-8 { grid-column: span 8; }
 .journal-span-12 { grid-column: span 12; }
 
-@media (max-width: 860px) {
-  .journal-span-4,
-  .journal-span-5,
-  .journal-span-6 { grid-column: span 6; }
-  .journal-span-7,
-  .journal-span-8,
-  .journal-span-12 { grid-column: span 12; }
+.journal-card[data-layout-placed='true'] {
+  grid-column: var(--j-col-start, auto) / span var(--j-col-span, 12);
+  grid-row: var(--j-row-start, auto) / span var(--j-row-span, 1);
 }
 
-@media (max-width: 620px) {
-  .journal-span-4,
-  .journal-span-5,
-  .journal-span-6,
-  .journal-span-7,
-  .journal-span-8,
-  .journal-span-12 { grid-column: span 12; }
+.journal-card--photo[data-layout-row-span='2'] {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+}
+
+@container journal-day (max-width: 720px) {
+  .journal-bento-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .journal-bento-grid .journal-card,
+  .journal-bento-grid .journal-card[data-layout-placed='true'] {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  .journal-card--photo[data-layout-row-span='2'] {
+    align-self: start;
+  }
+}
+
+@media (max-width: 860px) {
+  .journal-bento-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .journal-bento-grid .journal-card,
+  .journal-bento-grid .journal-card[data-layout-placed='true'] {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  .journal-card--photo[data-layout-row-span='2'] {
+    align-self: start;
+  }
 }
 
 /* --- Card Base & Shared Parts --- */
@@ -819,6 +849,19 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   background: color-mix(in srgb, var(--j-surface) 60%, transparent);
 }
 
+.journal-card--compact-short {
+  padding: 6px 8px 6px 16px;
+  border: 0;
+  border-left: 2px solid var(--j-line-strong);
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.journal-card--compact-short:hover {
+  border-left-color: var(--j-ink-3);
+}
+
 /* --- Species 4: Moment (Cream Oval / Pill Card) --- */
 
 .journal-card--moment {
@@ -827,6 +870,10 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   background: var(--j-sunken);
   border: 1px solid var(--j-line);
   text-align: center;
+}
+
+.journal-card--moment.journal-span-3 {
+  padding: 14px 18px;
 }
 
 .journal-moment-head {
@@ -977,6 +1024,7 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 10px;
+  align-items: start;
 }
 
 @media (max-width: 900px) {
@@ -1129,6 +1177,26 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   line-height: 1.45;
   color: var(--j-ink-2);
   word-break: break-word;
+}
+
+.journal-week-more-btn {
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px dashed var(--j-line-strong);
+  background: transparent;
+  color: var(--j-dai);
+  font-family: var(--j-font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.journal-week-more-btn:hover {
+  background: var(--j-dai-soft);
+  border-color: color-mix(in srgb, var(--j-dai) 45%, transparent);
 }
 
 /* --- Empty State --- */
@@ -1654,4 +1722,623 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   font-size: 10.5px;
   background: var(--j-dai-soft);
   color: var(--j-dai);
+}
+
+
+/* --- Feishu Direct Bridge Status Pill & Modal --- */
+
+.journal-status-pill.is-clickable {
+  appearance: none;
+  border: 1px solid var(--j-line);
+  background: var(--j-surface);
+  color: var(--j-ink-2);
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.journal-status-pill.is-clickable:hover {
+  border-color: var(--j-line-strong);
+  background: var(--j-sunken);
+  color: var(--j-ink-1);
+}
+
+.journal-status-pill.is-feishu-connected .journal-status-dot {
+  background: var(--j-pine);
+}
+
+.journal-status-pill.is-feishu-connecting .journal-status-dot {
+  background: var(--j-amber);
+}
+
+.journal-status-pill.is-feishu-error .journal-status-dot {
+  background: var(--j-cinnabar);
+}
+
+.journal-status-pill.is-feishu-disabled .journal-status-dot,
+.journal-status-pill.is-feishu-disconnected .journal-status-dot {
+  background: var(--j-ink-3);
+  opacity: 0.55;
+}
+
+.journal-feishu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(24, 23, 20, 0.42);
+  backdrop-filter: blur(4px);
+}
+
+.journal-feishu-modal {
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: 16px;
+  border: 1px solid var(--j-line);
+  background: var(--j-surface);
+  color: var(--j-ink-1);
+  box-shadow: 0 20px 54px rgba(0, 0, 0, 0.18);
+  padding: 22px 24px;
+}
+
+.journal-feishu-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.journal-feishu-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--j-ink-1);
+}
+
+.journal-feishu-subtitle {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--j-ink-3);
+}
+
+.journal-feishu-close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--j-ink-3);
+  cursor: pointer;
+}
+
+.journal-feishu-close:hover {
+  background: var(--j-sunken);
+  color: var(--j-ink-1);
+}
+
+.journal-feishu-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--j-line);
+  background: var(--j-canvas);
+  font-size: 12.5px;
+  margin-bottom: 14px;
+}
+
+.journal-feishu-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--j-ink-3);
+}
+
+.journal-feishu-status-bar.is-connected .journal-feishu-status-dot {
+  background: var(--j-pine);
+}
+
+.journal-feishu-status-bar.is-connecting .journal-feishu-status-dot {
+  background: var(--j-amber);
+}
+
+.journal-feishu-status-bar.is-error .journal-feishu-status-dot {
+  background: var(--j-cinnabar);
+}
+
+.journal-feishu-status-text {
+  font-weight: 500;
+  color: var(--j-ink-1);
+}
+
+.journal-feishu-status-count {
+  color: var(--j-ink-3);
+  font-size: 12px;
+}
+
+.journal-feishu-reconnect-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--j-line);
+  background: var(--j-surface);
+  color: var(--j-ink-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.journal-feishu-reconnect-btn:hover:not(:disabled) {
+  border-color: var(--j-line-strong);
+  color: var(--j-ink-1);
+}
+
+.journal-feishu-reconnect-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.journal-feishu-alert {
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+  word-break: break-word;
+}
+
+.journal-feishu-alert.is-error {
+  background: var(--j-cinnabar-soft);
+  color: var(--j-cinnabar);
+}
+
+.journal-feishu-alert.is-warn {
+  background: var(--j-amber-soft);
+  color: var(--j-amber);
+}
+
+.journal-feishu-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.journal-feishu-switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--j-ink-1);
+  cursor: pointer;
+}
+
+.journal-feishu-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.journal-feishu-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--j-ink-2);
+}
+
+.journal-feishu-field input,
+.journal-feishu-field select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--j-line);
+  background: var(--j-canvas);
+  color: var(--j-ink-1);
+  font-size: 13px;
+  font-family: var(--j-font-sans);
+  outline: none;
+}
+
+.journal-feishu-field input:focus,
+.journal-feishu-field select:focus {
+  border-color: var(--j-dai);
+}
+
+.journal-feishu-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.journal-feishu-advanced-toggle {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--j-ink-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.journal-feishu-advanced-toggle:hover {
+  color: var(--j-ink-1);
+}
+
+.journal-feishu-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--j-canvas);
+  border: 1px solid var(--j-line);
+}
+
+.journal-feishu-tip {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--j-ink-3);
+}
+
+.journal-feishu-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.journal-feishu-btn-secondary,
+.journal-feishu-btn-primary {
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.journal-feishu-btn-secondary {
+  border: 1px solid var(--j-line);
+  background: transparent;
+  color: var(--j-ink-2);
+}
+
+.journal-feishu-btn-secondary:hover {
+  background: var(--j-sunken);
+  color: var(--j-ink-1);
+}
+
+.journal-feishu-btn-primary {
+  border: 1px solid var(--j-dai);
+  background: var(--j-dai);
+  color: #fff;
+}
+
+.journal-feishu-btn-primary:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.journal-feishu-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+
+/* --- Editorial Date & Past-Month Calendar Popover --- */
+
+.journal-calendar-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.journal-year-month-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  margin-left: -9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.journal-year-month-btn:hover,
+.journal-year-month-btn.is-open {
+  background: var(--j-surface);
+  border-color: var(--j-line);
+  color: var(--j-ink-1);
+}
+
+.journal-year-month-caret {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--j-ink-3);
+  transition: color 140ms ease;
+}
+
+.journal-year-month-btn:hover .journal-year-month-caret,
+.journal-year-month-btn.is-open .journal-year-month-caret {
+  color: var(--j-dai);
+}
+
+.journal-calendar-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -9px;
+  z-index: 60;
+  width: 308px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  padding: 14px 14px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--j-line);
+  background: var(--j-surface);
+  color: var(--j-ink-1);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.journal-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.journal-calendar-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--j-ink-2);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.journal-calendar-nav-btn:hover {
+  background: var(--j-sunken);
+  border-color: var(--j-line);
+  color: var(--j-ink-1);
+}
+
+.journal-calendar-title-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--j-ink-1);
+  font-family: var(--j-font-sans);
+  font-size: 13.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.journal-calendar-title-btn:hover {
+  background: var(--j-sunken);
+  border-color: var(--j-line);
+}
+
+.journal-calendar-caret {
+  font-size: 10px;
+  color: var(--j-ink-3);
+}
+
+.journal-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.journal-calendar-weekday {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--j-ink-3);
+  padding: 3px 0;
+}
+
+.journal-calendar-days-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.journal-calendar-day-cell {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--j-ink-1);
+  font-family: var(--j-font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.journal-calendar-day-cell:hover {
+  background: var(--j-sunken);
+}
+
+.journal-calendar-day-cell.is-outside {
+  color: var(--j-ink-3);
+  opacity: 0.45;
+}
+
+.journal-calendar-day-cell.is-has-entries {
+  font-weight: 600;
+}
+
+.journal-calendar-day-cell.is-today {
+  border-color: var(--j-dai);
+  color: var(--j-dai);
+}
+
+.journal-calendar-day-cell.is-selected {
+  background: var(--j-ink-1);
+  border-color: var(--j-ink-1);
+  color: var(--j-surface);
+  opacity: 1;
+}
+
+.journal-calendar-day-num {
+  line-height: 1.1;
+}
+
+.journal-calendar-day-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--j-dai);
+  opacity: 0;
+}
+
+.journal-calendar-day-dot.is-visible {
+  opacity: 1;
+}
+
+.journal-calendar-day-cell.is-selected .journal-calendar-day-dot {
+  background: var(--j-surface);
+}
+
+.journal-calendar-months-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.journal-calendar-month-cell {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 9px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--j-line);
+  background: var(--j-canvas);
+  color: var(--j-ink-3);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.journal-calendar-month-cell:hover {
+  background: var(--j-sunken);
+  border-color: var(--j-line-strong);
+  color: var(--j-ink-1);
+}
+
+.journal-calendar-month-cell.is-has-entries {
+  background: var(--j-surface);
+  color: var(--j-ink-1);
+}
+
+.journal-calendar-month-cell.is-today {
+  border-color: var(--j-dai);
+}
+
+.journal-calendar-month-cell.is-active {
+  background: var(--j-dai-soft);
+  border-color: var(--j-dai);
+  color: var(--j-dai);
+}
+
+.journal-calendar-month-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.journal-calendar-month-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--j-dai);
+  font-variant-numeric: tabular-nums;
+}
+
+.journal-calendar-month-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--j-dai);
+}
+
+.journal-calendar-month-empty {
+  font-size: 11px;
+  color: var(--j-ink-3);
+  opacity: 0.45;
+}
+
+.journal-calendar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--j-line);
+}
+
+.journal-calendar-footer-meta {
+  font-size: 11.5px;
+  color: var(--j-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.journal-calendar-today-btn {
+  appearance: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-canvas);
+  color: var(--j-ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.journal-calendar-today-btn:hover {
+  border-color: var(--j-dai);
+  color: var(--j-dai);
+  background: var(--j-dai-soft);
 }

@@ -3,7 +3,7 @@
  * 支持图片懒加载、分类切换、行内编辑、安全二次确认删除与开对话探讨。
  */
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { IconInline } from '../../icon-inline'
 import { useI18n } from '../../i18n/i18n'
 import {
@@ -22,11 +22,18 @@ import {
   getNextJournalCategory,
   resolveEffectiveCardKind,
   toJournalDiscussTarget,
+  type JournalDayLayoutItem,
 } from './journal-ui-helpers'
+
+type JournalCardLayout = Pick<
+  JournalDayLayoutItem,
+  'colStart' | 'colSpan' | 'rowStart' | 'rowSpan' | 'presentation' | 'groupKind'
+>
 
 type JournalCardProps = {
   entry: JournalEntry
   index: number
+  layout?: JournalCardLayout
   projects?: WorkspaceProject[]
   deskRoot?: string
   imageCache: Record<string, string>
@@ -40,6 +47,7 @@ type JournalCardProps = {
 export function JournalCard({
   entry,
   index,
+  layout,
   projects = [],
   deskRoot = DEFAULT_SENTINEL_DESK_ROOT,
   imageCache,
@@ -94,8 +102,25 @@ export function JournalCard({
   }
 
   const species = resolveEffectiveCardKind(entry)
-  const colSpan = classifyJournalCardSpan(entry, index)
+  const colSpan = layout?.colSpan ?? classifyJournalCardSpan(entry, index)
+  const presentation = layout?.presentation ?? 'default'
   const categorySlug = getJournalCategorySlug(entry.category)
+  const layoutStyle: CSSProperties | undefined = layout
+    ? ({
+        '--j-col-start': layout.colStart,
+        '--j-col-span': layout.colSpan,
+        '--j-row-start': layout.rowStart,
+        '--j-row-span': layout.rowSpan,
+      } as CSSProperties)
+    : undefined
+  const layoutDataProps = {
+    'data-entry-id': entry.id,
+    'data-layout-group': layout?.groupKind,
+    'data-layout-placed': layout ? 'true' : undefined,
+    'data-layout-row-span': layout && layout.rowSpan > 1 ? String(layout.rowSpan) : undefined,
+    'data-compact-short': presentation === 'compact-thought' ? 'true' : undefined,
+    style: layoutStyle,
+  }
 
   const startEditing = () => {
     setDraftBody(entry.body)
@@ -321,7 +346,7 @@ export function JournalCard({
     return (
       <article
         className={`journal-card journal-card--${species} journal-card--editing journal-span-${colSpan}`}
-        data-entry-id={entry.id}
+        {...layoutDataProps}
       >
         <div className="journal-card-edit-head">
           <span className="journal-card-time">{entry.time}</span>
@@ -372,7 +397,7 @@ export function JournalCard({
     return (
       <article
         className={`journal-card journal-card--moment journal-span-${colSpan}`}
-        data-entry-id={entry.id}
+        {...layoutDataProps}
       >
         <div className="journal-moment-head">
           <span className="journal-card-time">{entry.time} ♪</span>
@@ -392,7 +417,7 @@ export function JournalCard({
     return (
       <article
         className={`journal-card journal-card--judgment journal-span-${colSpan}`}
-        data-entry-id={entry.id}
+        {...layoutDataProps}
       >
         <div className="journal-card-head">
           <div className="journal-card-head-left">
@@ -411,7 +436,7 @@ export function JournalCard({
     return (
       <article
         className={`journal-card journal-card--ai journal-span-${colSpan}`}
-        data-entry-id={entry.id}
+        {...layoutDataProps}
       >
         <div className="journal-card-head">
           <div className="journal-card-head-left">
@@ -432,7 +457,7 @@ export function JournalCard({
     return (
       <article
         className={`journal-card journal-card--photo journal-span-${colSpan}`}
-        data-entry-id={entry.id}
+        {...layoutDataProps}
       >
         {renderImageGrid()}
         <div className="journal-photo-body">
@@ -456,11 +481,33 @@ export function JournalCard({
     )
   }
 
+  if (presentation === 'compact-thought') {
+    return (
+      <article
+        className={`journal-card journal-card--thought journal-card--compact-short journal-span-${colSpan}`}
+        {...layoutDataProps}
+      >
+        <div className="journal-card-head">
+          <div className="journal-card-head-left">
+            <span className="journal-card-time">{entry.time}</span>
+            {renderCategoryPill()}
+            {entry.source === 'feishu' ? (
+              <span className="journal-source-badge">{t('journal.sourceFeishu')}</span>
+            ) : null}
+          </div>
+          {renderHoverActions()}
+        </div>
+        <div className="journal-card-body">{entry.body}</div>
+        {renderMetaFooter()}
+      </article>
+    )
+  }
+
   if (species === 'thought') {
     return (
       <article
         className={`journal-card journal-card--thought${entry.category === '未归类' ? ' is-uncategorized' : ''} journal-span-${colSpan}`}
-        data-entry-id={entry.id}
+        {...layoutDataProps}
       >
         <div className="journal-card-head">
           <div className="journal-card-head-left">
@@ -482,7 +529,7 @@ export function JournalCard({
   return (
     <article
       className={`journal-card journal-card--note journal-span-${colSpan}`}
-      data-entry-id={entry.id}
+      {...layoutDataProps}
     >
       <div className="journal-card-head">
         <div className="journal-card-head-left">

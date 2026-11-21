@@ -11,15 +11,20 @@ import { useI18n } from '../../i18n/i18n'
 import {
   DEFAULT_SENTINEL_DESK_ROOT,
   type CreateJournalEntryInput,
+  type FeishuBridgeConfigUpdate,
+  type FeishuBridgeStatus,
   type JournalConfig,
+  type JournalDaySummary,
   type JournalDiscussTarget,
   type JournalEntry,
   type JournalWeekDay,
   type UpdateJournalEntryInput,
 } from '../../journal-contract'
 import type { WorkspaceProject } from '../types'
+import { JournalCalendarPopover } from './JournalCalendarPopover'
 import { JournalCard } from './JournalCard'
 import { JournalComposer } from './JournalComposer'
+import { JournalFeishuModal } from './JournalFeishuModal'
 import { JournalLightbox, type LightboxImageItem } from './JournalLightbox'
 import { JournalWeekView } from './JournalWeekView'
 import {
@@ -30,6 +35,7 @@ import {
   formatWeekdayLabel,
   getJournalDesktopApi,
   getWeekDates,
+  planJournalDayLayout,
   shiftDateString,
   toLocalDateString,
 } from './journal-ui-helpers'
@@ -75,6 +81,12 @@ export function JournalPage({
   const [droppedFiles, setDroppedFiles] = useState<File[]>([])
   const [pageDragOver, setPageDragOver] = useState(false)
   const [saveNotice, setSaveNotice] = useState<'ready' | 'saved'>('ready')
+  const [feishuStatus, setFeishuStatus] = useState<FeishuBridgeStatus | null>(null)
+  const [feishuModalOpen, setFeishuModalOpen] = useState(false)
+  const [calendarOpen, setCalendarOpen] = useState(false)
+  const [allDaySummaries, setAllDaySummaries] = useState<JournalDaySummary[]>([])
+  const [calendarLoading, setCalendarLoading] = useState(false)
+  const calendarTriggerRef = useRef<HTMLButtonElement | null>(null)
 
   const pendingImagesRef = useRef<Set<string>>(new Set())
   const imageCacheRef = useRef<Record<string, string>>({})
@@ -171,6 +183,9 @@ export function JournalPage({
     void api.getJournalConfig?.().then((cfg) => {
       if (cfg) setConfig(cfg)
     })
+    void api.getFeishuJournalBridgeStatus?.().then((status) => {
+      if (status) setFeishuStatus(status)
+    }).catch(() => undefined)
     void api.watchJournal?.().catch(() => undefined)
     const unsubscribe = api.onJournalChanged?.((event) => {
       const activeWeek = getWeekDates(selectedDateRef.current)
@@ -183,8 +198,12 @@ export function JournalPage({
         void refreshJournalData(selectedDateRef.current)
       }
     })
+    const unsubscribeFeishu = api.onFeishuJournalBridgeStatus?.((status) => {
+      setFeishuStatus(status)
+    })
     return () => {
       unsubscribe?.()
+      unsubscribeFeishu?.()
       void api.unwatchJournal?.().catch(() => undefined)
     }
   }, [refreshJournalData, todayDate])
@@ -193,6 +212,28 @@ export function JournalPage({
     setActiveTagFilter(null)
     void refreshJournalData(selectedDate)
   }, [refreshJournalData, selectedDate])
+
+  useEffect(() => {
+    if (!calendarOpen) return
+    const api = getJournalDesktopApi()
+    if (!api?.listJournalDays) return
+    let cancelled = false
+    setCalendarLoading(true)
+    void api
+      .listJournalDays()
+      .then((summaries) => {
+        if (!cancelled && Array.isArray(summaries)) {
+          setAllDaySummaries(summaries)
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setCalendarLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [calendarOpen])
 
   useEffect(() => {
     return () => {
@@ -342,6 +383,11 @@ export function JournalPage({
     return dayEntries.filter((entry) => entry.tags.includes(activeTagFilter))
   }, [activeTagFilter, dayEntries])
 
+  const dayLayoutItems = useMemo(
+    () => planJournalDayLayout(visibleDayEntries),
+    [visibleDayEntries],
+  )
+
   const handlePageDrop = (event: DragEvent<HTMLElement>) => {
     const files = event.dataTransfer?.files
     if (!files?.length) return
@@ -375,7 +421,37 @@ export function JournalPage({
     >
       <header className="journal-topbar">
         <div className="journal-topbar-left no-drag">
-          <span className="journal-year-month">{formatJournalYearMonth(selectedDate)}</span>
+          <div className="journal-calendar-anchor">
+            <button
+              ref={calendarTriggerRef}
+              type="button"
+              className={`journal-year-month journal-year-month-btn${calendarOpen ? ' is-open' : ''}`}
+              aria-label={t('journal.calendarOpenAria')}
+              aria-haspopup="dialog"
+              aria-expanded={calendarOpen}
+              onClick={() => setCalendarOpen((open) => !open)}
+            >
+              <span>{formatJournalYearMonth(selectedDate)}</span>
+              <span className="journal-year-month-caret" aria-hidden="true">
+                {calendarOpen ? '▴' : '▾'}
+              </span>
+            </button>
+
+            {calendarOpen ? (
+              <JournalCalendarPopover
+                selectedDate={selectedDate}
+                todayDate={todayDate}
+                daySummaries={allDaySummaries}
+                loading={calendarLoading}
+                anchorRef={calendarTriggerRef}
+                onSelectDate={(dateStr) => {
+                  setSelectedDate(dateStr)
+                  setViewMode('day')
+                }}
+                onClose={() => setCalendarOpen(false)}
+              />
+            ) : null}
+          </div>
           {selectedDate !== todayDate ? (
             <button
               type="button"
@@ -530,16 +606,30 @@ export function JournalPage({
                 </span>
               </button>
 
-              <span className="journal-status-pill">
+              {saveNotice === 'saved' ? (
+                <span className="journal-status-pill">
+                  <span className="journal-status-dot" aria-hidden="true" />
+                  <span>{t('journal.statusSaved')}</span>
+                </span>
+              ) : null}
+
+              <button
+                type="button"
+                className={`journal-status-pill is-clickable is-feishu-${feishuStatus?.state ?? 'disabled'}`}
+                title={feishuStatus?.lastError || t('journal.feishuModalTitle')}
+                onClick={() => setFeishuModalOpen(true)}
+              >
                 <span className="journal-status-dot" aria-hidden="true" />
                 <span>
-                  {saveNotice === 'saved'
-                    ? t('journal.statusSaved')
-                    : config?.bridgeScriptAvailable
-                      ? t('journal.statusBridgeReady')
-                      : t('journal.statusReady')}
+                  {feishuStatus?.state === 'connected'
+                    ? t('journal.feishuBridgeConnected')
+                    : feishuStatus?.state === 'connecting'
+                      ? t('journal.feishuBridgeConnecting')
+                      : feishuStatus?.state === 'error'
+                        ? t('journal.feishuBridgeError')
+                        : t('journal.feishuBridgeSetup')}
                 </span>
-              </span>
+              </button>
             </div>
           </div>
 
@@ -578,11 +668,12 @@ export function JournalPage({
             </div>
           ) : (
             <div className="journal-bento-grid">
-              {visibleDayEntries.map((entry, idx) => (
+              {dayLayoutItems.map((item) => (
                 <JournalCard
-                  key={entry.id}
-                  entry={entry}
-                  index={idx}
+                  key={item.entry.id}
+                  entry={item.entry}
+                  index={item.index}
+                  layout={item}
                   projects={projects}
                   deskRoot={config?.deskRoot ?? DEFAULT_SENTINEL_DESK_ROOT}
                   imageCache={imageCache}
@@ -617,6 +708,25 @@ export function JournalPage({
             setLightbox((cur) => (cur ? { ...cur, activeIndex: nextIndex } : null))
           }
           onClose={() => setLightbox(null)}
+        />
+      ) : null}
+
+      {feishuModalOpen ? (
+        <JournalFeishuModal
+          status={feishuStatus}
+          onSave={async (update: FeishuBridgeConfigUpdate) => {
+            const api = getJournalDesktopApi()
+            if (!api?.saveFeishuJournalBridgeConfig) return
+            const next = await api.saveFeishuJournalBridgeConfig(update)
+            setFeishuStatus(next)
+          }}
+          onReconnect={async () => {
+            const api = getJournalDesktopApi()
+            if (!api?.reconnectFeishuJournalBridge) return
+            const next = await api.reconnectFeishuJournalBridge()
+            setFeishuStatus(next)
+          }}
+          onClose={() => setFeishuModalOpen(false)}
         />
       ) : null}
     </section>

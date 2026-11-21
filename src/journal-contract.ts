@@ -225,3 +225,44 @@ export type JournalChangedEvent = {
 export type JournalDiscussTarget =
   | { kind: 'desk'; deskRoot: string }
   | { kind: 'project'; projectId: string }
+
+export type FeishuBridgeDomain = 'feishu' | 'lark'
+
+export type FeishuBridgeConnectionState =
+  | 'disabled'
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'error'
+
+export type FeishuBridgePublicConfig = {
+  enabled: boolean
+  appId: string
+  hasAppSecret: boolean
+  appSecretMasked: string
+  allowedChatId: string
+  allowedOpenId: string
+  domain: FeishuBridgeDomain
+  reactionEmoji: string
+}
+
+export type FeishuBridgeConfigUpdate = {
+  enabled?: boolean
+  appId?: string
+  /** Omit (undefined) to keep existing secret; pass '' to clear */
+  appSecret?: string
+  allowedChatId?: string
+  allowedOpenId?: string
+  domain?: FeishuBridgeDomain
+  reactionEmoji?: string
+}
+
+export type FeishuBridgeStatus = {
+  state: FeishuBridgeConnectionState
+  config: FeishuBridgePublicConfig
+  lastError: string | null
+  lastMessageAt: number | null
+  receivedCount: number
+  /** Non-fatal warning when emoji reaction could not be sent (e.g. missing permission) */
+  reactionWarning: string | null
+}

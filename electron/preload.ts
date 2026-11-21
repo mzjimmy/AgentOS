@@ -38,6 +38,8 @@ import type {
   LegacyJournalSyncResult,
   UpdateJournalEntryInput,
   UpdateJournalEntryResult,
+  FeishuBridgeConfigUpdate,
+  FeishuBridgeStatus,
 } from '../src/journal-contract'
 import type {
   ActiveChatPickPayload,
@@ -530,6 +532,20 @@ const desktopAdapter = {
     const listener = (_event: IpcRendererEvent, event: JournalChangedEvent) => handler(event)
     ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onJournalChanged, listener)
     return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onJournalChanged, listener)
+  },
+  getFeishuJournalBridgeStatus() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getFeishuJournalBridgeStatus) as Promise<FeishuBridgeStatus>
+  },
+  saveFeishuJournalBridgeConfig(update: FeishuBridgeConfigUpdate) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.saveFeishuJournalBridgeConfig, update) as Promise<FeishuBridgeStatus>
+  },
+  reconnectFeishuJournalBridge() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.reconnectFeishuJournalBridge) as Promise<FeishuBridgeStatus>
+  },
+  onFeishuJournalBridgeStatus(handler: (status: FeishuBridgeStatus) => void) {
+    const listener = (_event: IpcRendererEvent, status: FeishuBridgeStatus) => handler(status)
+    ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onFeishuJournalBridgeStatus, listener)
+    return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onFeishuJournalBridgeStatus, listener)
   },
 } satisfies DesktopAPI
 
