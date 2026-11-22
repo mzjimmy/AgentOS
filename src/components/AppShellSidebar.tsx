@@ -4,6 +4,7 @@
  */
 
 import {
+  Fragment,
   useEffect,
   useCallback,
   useLayoutEffect,
@@ -15,6 +16,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react'
+import type { IconName } from '../icons'
 import { IconInline } from '../icon-inline'
 import type { AppUpdaterState } from '../desktop-types'
 import type { AppLocale } from '../i18n/i18n'
@@ -44,6 +46,7 @@ const SIDEBAR_SECTION_PREVIEW_LIMIT = 5
 type ContextMenuItem = {
   id: string
   label: string
+  icon?: IconName
   danger?: boolean
   disabled?: boolean
   accent?: boolean
@@ -54,7 +57,61 @@ type ContextMenuItem = {
 type ContextMenuState = {
   x: number
   y: number
+  projectId?: string
   items: ContextMenuItem[]
+}
+
+/**
+ * 保留供工作台 Tab 菜单复用的菜单项构造器（符合 C-RSM-505 约束）。
+ * Extensible Runtime Tab context-menu item builder preserving C-RSM-505 semantics.
+ */
+export function buildRuntimeTabMenuItems({
+  tab,
+  runtimeStates,
+  runtimeDevelopmentStates,
+  t,
+  closeContextMenu,
+  onSelectWorkspaceTab,
+  onRuntimeDevelopmentAction,
+  onBeginRename,
+  onCloseWorkspaceTab,
+  onRestartWorkspaceRuntime,
+  onStopWorkspaceRuntime,
+  onViewWorkspaceRuntime,
+}: {
+  tab: WorkspaceTab
+  runtimeStates: Record<string, RuntimeSnapshot>
+  runtimeDevelopmentStates: Record<string, RuntimeDevelopmentSnapshot>
+  t: (path: string, vars?: Record<string, string | number>) => string
+  closeContextMenu: () => void
+  onSelectWorkspaceTab: (tabId: string) => void
+  onRuntimeDevelopmentAction: (tab: WorkspaceTab, snapshot?: RuntimeDevelopmentSnapshot) => void
+  onBeginRename: (tab: WorkspaceTab) => void
+  onCloseWorkspaceTab: (tabId: string) => void
+  onRestartWorkspaceRuntime: (tab: WorkspaceTab) => void
+  onStopWorkspaceRuntime: (tab: WorkspaceTab) => void
+  onViewWorkspaceRuntime: (tab: WorkspaceTab) => void
+}): ContextMenuItem[] {
+  const runtime = runtimeStates[tab.runtimeDefinitionId]
+  const development = runtimeDevelopmentStates[workspaceRuntimeScopeId(tab.runtimeDefinitionId)]
+  const developmentUi = runtimeDevelopmentStatus(t, development)
+  // `C-RSM-505`: the menu names intentions a user has; process controls
+  // appear only while the Runtime needs troubleshooting.
+  const troubleshoot = runtimeNeedsTroubleshooting(runtime)
+  const canRestart = Boolean(runtime && ['running', 'development', 'degraded', 'failed', 'stopped'].includes(runtime.status))
+  const canStop = Boolean(runtime && ['preparing', 'starting', 'running', 'development', 'degraded'].includes(runtime.status))
+  const troubleshootItems: ContextMenuItem[] = troubleshoot ? [
+    { id: 'runtime-tab-restart', label: `${t('runtime.troubleshoot')} · ${t('runtime.restart')}`, disabled: !canRestart, separatorBefore: true, onSelect: () => { closeContextMenu(); onRestartWorkspaceRuntime(tab) } },
+    { id: 'runtime-tab-stop', label: `${t('runtime.troubleshoot')} · ${t('runtime.stop')}`, disabled: !canStop, onSelect: () => { closeContextMenu(); onStopWorkspaceRuntime(tab) } },
+    { id: 'runtime-tab-view-runtime', label: `${t('runtime.troubleshoot')} · ${t('runtime.viewRuntime')}`, onSelect: () => { closeContextMenu(); onViewWorkspaceRuntime(tab) } },
+  ] : []
+  return [
+    { id: 'runtime-tab-open', label: t('runtime.openWorkbench'), onSelect: () => { closeContextMenu(); onSelectWorkspaceTab(tab.id) } },
+    { id: 'runtime-tab-development', label: developmentUi.actionLabel, accent: developmentUi.action === 'open', disabled: developmentUi.actionDisabled, onSelect: () => { closeContextMenu(); onRuntimeDevelopmentAction(tab, development) } },
+    { id: 'runtime-tab-rename', label: t('runtime.rename'), separatorBefore: true, onSelect: () => onBeginRename(tab) },
+    { id: 'runtime-tab-close', label: t('runtime.close'), danger: true, onSelect: () => { closeContextMenu(); onCloseWorkspaceTab(tab.id) } },
+    ...troubleshootItems,
+  ]
 }
 
 type AppShellSidebarProps = {
@@ -90,8 +147,11 @@ type AppShellSidebarProps = {
   onOpenSearch: () => void
   onOpenPinnedModule: (moduleId: Exclude<AppViewId, 'settings'>) => void
   journalTodayCount?: number
+  pinnedBadgeCounts?: Partial<Record<Exclude<AppViewId, 'settings'>, number>>
   onOpenSettingsCategory: (category: SettingsCategoryId) => void
-  onSelectProject: (projectId: string) => void
+  onSelectProject?: (projectId: string) => void
+  onNewProjectThread: (projectId: string) => void
+  onOpenProjectRuntime: (projectId: string) => void
   onSelectThread: (threadId: string) => void
   onSelectProjectSkill: (projectId: string, skill: Omit<SelectedProjectSkill, 'projectId'>) => void
   onRunProjectSkill: (projectId: string, skill: ProjectSkillRunRequest) => void
@@ -131,23 +191,13 @@ export function AppShellSidebar({
   canBack,
   canForward,
   onCreateProject,
-  workspaceTabs,
-  activeWorkspaceTabId,
-  runtimeStates,
-  runtimeDevelopmentStates,
-  onNewRuntime,
-  onSelectWorkspaceTab,
-  onCloseWorkspaceTab,
-  onRenameWorkspaceTab,
-  onRuntimeDevelopmentAction,
-  onViewWorkspaceRuntime,
-  onRestartWorkspaceRuntime,
-  onStopWorkspaceRuntime,
   onOpenSearch,
   onOpenPinnedModule,
   journalTodayCount,
+  pinnedBadgeCounts,
   onOpenSettingsCategory,
-  onSelectProject,
+  onNewProjectThread,
+  onOpenProjectRuntime,
   onSelectThread,
   onSelectProjectSkill,
   onRunProjectSkill,
@@ -172,9 +222,6 @@ export function AppShellSidebar({
   const isSettingsSidebar = activeViewId === 'settings'
   const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [editingRuntimeTabId, setEditingRuntimeTabId] = useState<string | null>(null)
-  const [editingRuntimeTabTitle, setEditingRuntimeTabTitle] = useState('')
-  const [runtimeTabRenameError, setRuntimeTabRenameError] = useState('')
   const collapsedProjectIdSet = useMemo(() => new Set(collapsedProjectIds), [collapsedProjectIds])
   const [skillTip, setSkillTip] = useState<{
     text: string
@@ -207,67 +254,6 @@ export function AppShellSidebar({
   // --- Project row HTML5 DnD: set dataTransfer + compute drop “before/after” / 项目行原生拖拽：写入 dataTransfer 并计算插入前后 ---
 
   const closeContextMenu = () => setContextMenu(null)
-
-  const openRuntimeMenu = (target: HTMLElement, next: ContextMenuState) => {
-    contextMenuReturnRef.current = target
-    setContextMenu(next)
-  }
-
-  const beginRuntimeTabRename = (tab: WorkspaceTab) => {
-    closeContextMenu()
-    setRuntimeTabRenameError('')
-    setEditingRuntimeTabId(tab.id)
-    setEditingRuntimeTabTitle(tab.title)
-  }
-
-  const commitRuntimeTabRename = async (tab: WorkspaceTab) => {
-    const title = editingRuntimeTabTitle.trim()
-    if (title.length < 1 || title.length > 64) {
-      setRuntimeTabRenameError(t('runtime.invalidTitle'))
-      return
-    }
-    if (!onRenameWorkspaceTab) {
-      setEditingRuntimeTabId(null)
-      return
-    }
-    const result = await onRenameWorkspaceTab(tab.id, title)
-    if (result === false) {
-      setRuntimeTabRenameError(t('runtime.renameFailed'))
-      return
-    }
-    setEditingRuntimeTabId(null)
-    setRuntimeTabRenameError('')
-  }
-
-  const openRuntimeTabMenu = (event: ReactMouseEvent, tab: WorkspaceTab) => {
-    event.preventDefault()
-    event.stopPropagation()
-    const rect = event.currentTarget.getBoundingClientRect()
-    const runtime = runtimeStates[tab.runtimeDefinitionId]
-    const development = runtimeDevelopmentStates[workspaceRuntimeScopeId(tab.runtimeDefinitionId)]
-    const developmentUi = runtimeDevelopmentStatus(t, development)
-    // `C-RSM-505`: the menu names intentions a user has; process controls
-    // appear only while the Runtime needs troubleshooting.
-    const troubleshoot = runtimeNeedsTroubleshooting(runtime)
-    const canRestart = Boolean(runtime && ['running', 'development', 'degraded', 'failed', 'stopped'].includes(runtime.status))
-    const canStop = Boolean(runtime && ['preparing', 'starting', 'running', 'development', 'degraded'].includes(runtime.status))
-    const troubleshootItems: ContextMenuItem[] = troubleshoot ? [
-      { id: 'runtime-tab-restart', label: `${t('runtime.troubleshoot')} · ${t('runtime.restart')}`, disabled: !canRestart, separatorBefore: true, onSelect: () => { closeContextMenu(); onRestartWorkspaceRuntime(tab) } },
-      { id: 'runtime-tab-stop', label: `${t('runtime.troubleshoot')} · ${t('runtime.stop')}`, disabled: !canStop, onSelect: () => { closeContextMenu(); onStopWorkspaceRuntime(tab) } },
-      { id: 'runtime-tab-view-runtime', label: `${t('runtime.troubleshoot')} · ${t('runtime.viewRuntime')}`, onSelect: () => { closeContextMenu(); onViewWorkspaceRuntime(tab) } },
-    ] : []
-    openRuntimeMenu(event.currentTarget as HTMLElement, {
-      x: event.clientX || rect.left,
-      y: event.clientY || rect.bottom,
-      items: [
-        { id: 'runtime-tab-open', label: t('runtime.openWorkbench'), onSelect: () => { closeContextMenu(); onSelectWorkspaceTab(tab.id) } },
-        { id: 'runtime-tab-development', label: developmentUi.actionLabel, accent: developmentUi.action === 'open', disabled: developmentUi.actionDisabled, onSelect: () => { closeContextMenu(); onRuntimeDevelopmentAction(tab, development) } },
-        { id: 'runtime-tab-rename', label: t('runtime.rename'), separatorBefore: true, onSelect: () => beginRuntimeTabRename(tab) },
-        { id: 'runtime-tab-close', label: t('runtime.close'), danger: true, onSelect: () => { closeContextMenu(); onCloseWorkspaceTab(tab.id) } },
-        ...troubleshootItems,
-      ],
-    })
-  }
 
   const clearProjectDragState = () => {
     setDraggingProjectId(null)
@@ -498,19 +484,38 @@ export function AppShellSidebar({
     setConfirmingArchiveThreadId(thread.id)
   }
 
-  const openProjectMenu = (event: ReactMouseEvent, project: WorkspaceProject) => {
+  const openProjectMenu = (event: ReactMouseEvent, project: WorkspaceProject, source: 'context' | 'button' = 'context') => {
     setSkillTip(null)
     event.preventDefault()
     event.stopPropagation()
+    if (source === 'button' && contextMenu?.projectId === project.id) {
+      closeContextMenu()
+      return
+    }
+    const target = event.currentTarget as HTMLElement
+    const rect = target.getBoundingClientRect()
+    contextMenuReturnRef.current = target
     const isPinned = Boolean(project.pinnedAt)
     const canRemove = projects.length > 1
     setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
+      x: source === 'button' ? rect.left : (event.clientX || rect.left),
+      y: source === 'button' ? rect.bottom + 4 : (event.clientY || rect.bottom),
+      projectId: project.id,
       items: [
+        {
+          id: 'open-project-runtime',
+          label: t('sidebar.menuOpenGraphicalUi'),
+          icon: 'monitor',
+          onSelect: () => {
+            closeContextMenu()
+            setConfirmingArchiveThreadId(null)
+            onOpenProjectRuntime(project.id)
+          },
+        },
         {
           id: 'pin-project',
           label: isPinned ? t('sidebar.menuUnpinProject') : t('sidebar.menuPinProject'),
+          icon: 'pin',
           onSelect: () => {
             closeContextMenu()
             setConfirmingArchiveThreadId(null)
@@ -520,6 +525,8 @@ export function AppShellSidebar({
         {
           id: 'reveal',
           label: isDarwin ? t('sidebar.menuRevealInFinder') : t('sidebar.menuRevealInFileManager'),
+          icon: 'folder',
+          separatorBefore: true,
           disabled: !window.desktop?.showItemInFolder || project.pathMissing,
           onSelect: () => {
             closeContextMenu()
@@ -530,6 +537,7 @@ export function AppShellSidebar({
         {
           id: 'relocate-project',
           label: t('sidebar.menuRelocateProject'),
+          icon: 'settings',
           onSelect: () => {
             closeContextMenu()
             setConfirmingArchiveThreadId(null)
@@ -539,7 +547,9 @@ export function AppShellSidebar({
         {
           id: 'remove-project',
           label: t('sidebar.menuRemoveProject'),
+          icon: 'x',
           danger: true,
+          separatorBefore: true,
           disabled: !canRemove,
           onSelect: () => {
             closeContextMenu()
@@ -562,6 +572,7 @@ export function AppShellSidebar({
         {
           id: 'run-skill',
           label: t('sidebar.menuRunSkill'),
+          icon: 'play',
           onSelect: () => {
             closeContextMenu()
             setConfirmingArchiveThreadId(null)
@@ -571,6 +582,7 @@ export function AppShellSidebar({
         {
           id: 'hide-skill',
           label: t('sidebar.menuHideSkill'),
+          icon: 'x',
           onSelect: () => {
             closeContextMenu()
             setConfirmingArchiveThreadId(null)
@@ -593,6 +605,7 @@ export function AppShellSidebar({
         {
           id: 'pin-thread',
           label: isPinned ? t('sidebar.menuUnpinThread') : t('sidebar.menuPinThread'),
+          icon: 'pin',
           onSelect: () => {
             closeContextMenu()
             setConfirmingArchiveThreadId(null)
@@ -602,6 +615,7 @@ export function AppShellSidebar({
         {
           id: 'remove-thread',
           label: t('sidebar.menuRemoveThread'),
+          icon: 'trash',
           danger: true,
           onSelect: () => {
             closeContextMenu()
@@ -617,45 +631,12 @@ export function AppShellSidebar({
 
   return (
     <>
-      <div className="app-chrome-toolbar draggable" aria-label={t('sidebar.windowNav')}>
-        <button
-          type="button"
-          className="btn btn-toolbar"
-          id="btn-toggle-sidebar"
-          title={t('sidebar.toggleSidebar')}
-          aria-label={t('sidebar.toggleSidebar')}
-          onClick={onToggleCollapsed}
-        >
-          <IconInline name="sidebar" />
-        </button>
-        <button
-          type="button"
-          className="btn btn-toolbar"
-          id="btn-back"
-          title={t('sidebar.back')}
-          aria-label={t('sidebar.back')}
-          disabled={!canBack}
-          onClick={() => window.history.back()}
-        >
-          <IconInline name="back" />
-        </button>
-        <button
-          type="button"
-          className="btn btn-toolbar"
-          id="btn-forward"
-          title={t('sidebar.forward')}
-          aria-label={t('sidebar.forward')}
-          disabled={!canForward}
-          onClick={() => window.history.forward()}
-        >
-          <IconInline name="forward" />
-        </button>
-      </div>
       <aside
         className={`app-sidebar draggable${isSettingsSidebar ? ' is-settings-mode' : ''}`}
         aria-label={isSettingsSidebar ? t('sidebar.settingsNav') : t('sidebar.appNav')}
         ref={sidebarRef}
       >
+        <div className="app-sidebar-top-drag" aria-hidden="true" />
         <div className="app-sidebar-scroll">
           <div className="app-sidebar-inner">
             {isSettingsSidebar ? (
@@ -687,10 +668,16 @@ export function AppShellSidebar({
               </>
             ) : (
               <>
+                <div className="app-sidebar-brand">
+                  <IconInline name="brandMark" className="app-sidebar-brand__mark" />
+                  <span className="app-sidebar-brand__name">{t('sidebar.brandName')}</span>
+                </div>
                 <nav className="app-sidebar-section" aria-label={t('sidebar.pinnedSection')}>
                   {PINNED_MODULES.map((mod) => {
                     const isActive = activeViewId === mod.id
-                    const badgeCount = mod.id === 'journal' ? journalTodayCount : undefined
+                    const badgeCount =
+                      pinnedBadgeCounts?.[mod.id] ??
+                      (mod.id === 'journal' ? journalTodayCount : undefined)
                     return (
                       <button
                         key={mod.id}
@@ -714,76 +701,6 @@ export function AppShellSidebar({
                     )
                   })}
                 </nav>
-                <div className="app-sidebar-section runtime-tabs-section" data-testid="runtime-tabs-section">
-                  <div className="app-sidebar-section-heading">
-                    <div className="app-sidebar-section-label">{t('runtime.section')}</div>
-                    <button type="button" className="app-sidebar-section-action" data-testid="runtime-new-tab" aria-label={t('runtime.newTab')} title={t('runtime.newTab')} onClick={onNewRuntime}>
-                      <IconInline name="plus" />
-                    </button>
-                  </div>
-                  {workspaceTabs.length > 0 ? (
-                    <div className="local-app-sidebar-list runtime-tabs-list" aria-label={t('runtime.section')}>
-                      {workspaceTabs.map((tab) => {
-                        const editing = editingRuntimeTabId === tab.id
-                        return <div className={`local-app-sidebar-row runtime-tab-row${activeWorkspaceTabId === tab.id ? ' is-active' : ''}`} key={tab.id} data-testid="runtime-tab">
-                          {editing ? <input
-                            autoFocus
-                            className="runtime-tab-title-input"
-                            data-testid="runtime-tab-title-input"
-                            value={editingRuntimeTabTitle}
-                            maxLength={64}
-                            onChange={(event) => setEditingRuntimeTabTitle(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') { event.preventDefault(); void commitRuntimeTabRename(tab) }
-                              if (event.key === 'Escape') { event.preventDefault(); setEditingRuntimeTabId(null); setRuntimeTabRenameError('') }
-                            }}
-                            aria-label={t('runtime.rename')}
-                          /> : <button
-                            type="button"
-                            className="local-app-sidebar-select runtime-tab-select"
-                            data-runtime-tab-id={tab.id}
-                            aria-current={activeWorkspaceTabId === tab.id ? 'page' : undefined}
-                            onClick={() => onSelectWorkspaceTab(tab.id)}
-                            onContextMenu={(event) => openRuntimeTabMenu(event, tab)}
-                            onKeyDown={(event) => {
-                              if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
-                                event.preventDefault()
-                                const rect = event.currentTarget.getBoundingClientRect()
-                                openRuntimeMenu(event.currentTarget, { x: rect.left, y: rect.bottom, items: [
-                                  { id: 'runtime-tab-rename', label: t('runtime.rename'), onSelect: () => beginRuntimeTabRename(tab) },
-                                  { id: 'runtime-tab-close', label: t('runtime.close'), danger: true, onSelect: () => { closeContextMenu(); onCloseWorkspaceTab(tab.id) } },
-                                ] })
-                              }
-                            }}
-                          >
-                            <IconInline name="laptop" />
-                            <span>{tab.title}</span>
-                          </button>}
-                          {!editing ? <button type="button" className="runtime-tab-menu-trigger" aria-label={t('runtime.workbenchMenu', { title: tab.title })} title={t('runtime.workbenchMenu', { title: tab.title })} onClick={(event) => openRuntimeTabMenu(event, tab)}><IconInline name="moreHorizontal" /></button> : null}
-                          {editing && runtimeTabRenameError ? <small className="runtime-tab-rename-error">{runtimeTabRenameError}</small> : null}
-                        </div>
-                      })}
-                    </div>
-                  ) : <p className="local-app-sidebar-empty">{t('runtime.empty')}</p>}
-                </div>
-                <button
-                  type="button"
-                  className="app-sidebar-new-thread"
-                  id="btn-sidebar-new-thread"
-                  onClick={() => onSelectProject(activeProjectId)}
-                >
-                  <IconInline name="message" />
-                  <span>{t('sidebar.newThread')}</span>
-                </button>
-                <button
-                  type="button"
-                  className="app-sidebar-search"
-                  id="btn-sidebar-search"
-                  onClick={onOpenSearch}
-                >
-                  <IconInline name="search" />
-                  <span>{t('search.open')}</span>
-                </button>
                 <div className="app-sidebar-section-heading">
                   <div className="app-sidebar-section-label">{t('sidebar.projectsSection')}</div>
                   <button
@@ -821,15 +738,16 @@ export function AppShellSidebar({
                         : projectThreads
                     const projectDropPosition =
                       projectDropTarget?.projectId === project.id ? projectDropTarget.position : null
+                    const isProjectMenuOpen = contextMenu?.projectId === project.id
                     return (
                       <section
                         key={project.id}
                         className={`app-project-group${projectActive ? ' is-active' : ''}${project.pinnedAt ? ' is-pinned' : ''}${draggingProjectId === project.id ? ' is-dragging' : ''}${projectDropPosition ? ` is-drop-${projectDropPosition}` : ''}`}
                       >
                         <div
-                          className="app-project-row"
+                          className={`app-project-row${projectActive ? ' is-active' : ''}${isProjectMenuOpen ? ' is-menu-open' : ''}`}
                           draggable
-                          onContextMenu={(event) => openProjectMenu(event, project)}
+                          onContextMenu={(event) => openProjectMenu(event, project, 'context')}
                           onDragStart={(event) => startProjectDrag(event, project.id)}
                           onDragOver={(event) => updateProjectDropTarget(event, project.id)}
                           onDragLeave={(event) => {
@@ -844,12 +762,13 @@ export function AppShellSidebar({
                             type="button"
                             className="app-project-select"
                             aria-current={projectActive ? 'true' : undefined}
+                            aria-expanded={projectExpanded}
                             onClick={() => {
                               setConfirmingArchiveThreadId(null)
-                              onSelectProject(project.id)
+                              onToggleSidebarProjectCollapsed(project.id)
                             }}
                           >
-                            <IconInline name="folder" />
+                            <IconInline name={projectExpanded ? 'folderOpen' : 'folder'} />
                             <span className="app-project-copy">
                               <span className="app-project-name">{project.name}</span>
                               {project.pathMissing ? (
@@ -857,24 +776,32 @@ export function AppShellSidebar({
                               ) : null}
                             </span>
                           </button>
-                          <button
-                            type="button"
-                            className={`app-project-toggle${projectExpanded ? ' is-expanded' : ' is-collapsed'}`}
-                            title={projectExpanded ? t('sidebar.collapseProject') : t('sidebar.expandProject')}
-                            aria-label={
-                              projectExpanded
-                                ? t('sidebar.collapseProjectAria', { name: project.name })
-                                : t('sidebar.expandProjectAria', { name: project.name })
-                            }
-                            aria-expanded={projectExpanded}
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              setConfirmingArchiveThreadId(null)
-                              onToggleSidebarProjectCollapsed(project.id)
-                            }}
-                          >
-                            <IconInline name="chevron" />
-                          </button>
+                          <div className="app-project-actions">
+                            <button
+                              type="button"
+                              className="app-project-action-btn"
+                              title={t('sidebar.projectMoreActions')}
+                              aria-label={t('sidebar.projectMoreActions')}
+                              aria-haspopup="menu"
+                              aria-expanded={isProjectMenuOpen}
+                              onClick={(event) => openProjectMenu(event, project, 'button')}
+                            >
+                              <IconInline name="moreHorizontal" />
+                            </button>
+                            <button
+                              type="button"
+                              className="app-project-action-btn"
+                              title={t('sidebar.newProjectThread')}
+                              aria-label={t('sidebar.newProjectThread')}
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                setConfirmingArchiveThreadId(null)
+                                onNewProjectThread(project.id)
+                              }}
+                            >
+                              <IconInline name="compose" />
+                            </button>
+                          </div>
                         </div>
                         {projectExpanded ? (
                           <div className="app-project-content">
@@ -1183,6 +1110,50 @@ export function AppShellSidebar({
         aria-label={t('sidebar.resizeSidebar')}
         onPointerDown={onSplitterPointerDown}
       />
+      <div className="app-chrome-toolbar draggable" aria-label={t('sidebar.windowNav')}>
+        <button
+          type="button"
+          className="btn btn-toolbar"
+          id="btn-toggle-sidebar"
+          title={t('sidebar.toggleSidebar')}
+          aria-label={t('sidebar.toggleSidebar')}
+          onClick={onToggleCollapsed}
+        >
+          <IconInline name="sidebar" />
+        </button>
+        <button
+          type="button"
+          className="btn btn-toolbar"
+          id="btn-back"
+          title={t('sidebar.back')}
+          aria-label={t('sidebar.back')}
+          disabled={!canBack}
+          onClick={() => window.history.back()}
+        >
+          <IconInline name="back" />
+        </button>
+        <button
+          type="button"
+          className="btn btn-toolbar"
+          id="btn-forward"
+          title={t('sidebar.forward')}
+          aria-label={t('sidebar.forward')}
+          disabled={!canForward}
+          onClick={() => window.history.forward()}
+        >
+          <IconInline name="forward" />
+        </button>
+        <button
+          type="button"
+          className="btn btn-toolbar"
+          id="btn-sidebar-search"
+          title={t('search.open')}
+          aria-label={t('search.open')}
+          onClick={onOpenSearch}
+        >
+          <IconInline name="search" />
+        </button>
+      </div>
       {contextMenu ? (
         <div
           ref={menuPanelRef}
@@ -1193,21 +1164,28 @@ export function AppShellSidebar({
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           {contextMenu.items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              role="menuitem"
-              disabled={item.disabled}
-              className={`app-sidebar-context-menu__item${item.danger ? ' is-danger' : ''}${item.accent ? ' is-accent' : ''}${item.separatorBefore ? ' has-separator' : ''}`}
-              data-testid={item.id === 'runtime-tab-rename' ? 'runtime-tab-menu-rename' : item.id === 'runtime-tab-close' ? 'runtime-tab-menu-close' : undefined}
-              onClick={(event) => {
-                event.stopPropagation()
-                if (item.disabled) return
-                item.onSelect()
-              }}
-            >
-              {item.label}
-            </button>
+            <Fragment key={item.id}>
+              {item.separatorBefore ? (
+                <div className="app-sidebar-context-menu__separator" role="separator" />
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                disabled={item.disabled}
+                className={`app-sidebar-context-menu__item${item.danger ? ' is-danger' : ''}${item.accent ? ' is-accent' : ''}`}
+                data-testid={item.id === 'runtime-tab-rename' ? 'runtime-tab-menu-rename' : item.id === 'runtime-tab-close' ? 'runtime-tab-menu-close' : undefined}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (item.disabled) return
+                  item.onSelect()
+                }}
+              >
+                {item.icon ? (
+                  <IconInline name={item.icon} className="app-sidebar-context-menu__icon" />
+                ) : null}
+                <span className="app-sidebar-context-menu__label">{item.label}</span>
+              </button>
+            </Fragment>
           ))}
         </div>
       ) : null}

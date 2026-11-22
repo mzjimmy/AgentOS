@@ -94,6 +94,16 @@ export const Icons = {
     '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" d="M5 7h14M10 11v6M14 11v6"/><path stroke-linejoin="round" d="M9 7l1-2h4l1 2M7 7l1 13h8l1-13"/></svg>',
   journal:
     '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2.2"/><path stroke-linecap="round" d="M9 8.5h6M9 12h6M9 15.5h4"/><path stroke-linecap="round" d="M3.5 8h2M3.5 12h2M3.5 16h2"/></svg>',
+  folderOpen:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 7.5A2 2 0 015.75 5.5h3.8l1.95 2h6.75a2 2 0 012 2V11"/><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 18.5l2.1-6.9A1.5 1.5 0 017.28 10.5h12.2a1.25 1.25 0 011.2 1.6l-1.58 5.25a1.75 1.75 0 01-1.67 1.15H3.75z"/></svg>',
+  compose:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25h10.5a2.25 2.25 0 002.25-2.25V12"/><path stroke-linecap="round" stroke-linejoin="round" d="M18.25 4.25a1.75 1.75 0 012.48 2.48L12.5 14.95l-3.25.78.78-3.25 8.22-8.23z"/></svg>',
+  brandMark:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linejoin="round" d="M12 3.5l7.25 4.25v8.5L12 20.5l-7.25-4.25v-8.5L12 3.5z"/><circle cx="12" cy="12" r="2.25"/></svg>',
+  monitor:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="12" rx="2"/><path stroke-linecap="round" d="M8.5 20h7M12 16.5V20"/></svg>',
+  archive:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="4" rx="1"/><path stroke-linecap="round" stroke-linejoin="round" d="M5 8.5v9.5a1.75 1.75 0 001.75 1.75h10.5A1.75 1.75 0 0019 18V8.5M10 12.5h4"/></svg>',
 } as const
 
 /** Icons 对象的联合键 / Keys available on Icons map */
