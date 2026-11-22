@@ -49,6 +49,7 @@ import type { AnthropicCallOptions, AnthropicMessagesResult } from '../anthropic
 
 const SCHEDULER_TICK_MS = 60_000
 const MAX_AUTO_RETRIES_PER_DAY = 3
+const DEFAULT_BEFORE_SCHEDULED_TIMEOUT_MS = 25_000
 
 export type IntentTodoBrokerPort = {
   createThread(input: CreateProjectThreadInput): Promise<ProjectChatResult<CreateProjectThreadResult>>
@@ -78,6 +79,10 @@ export type IntentTodoServiceOptions = {
     options?: AnthropicCallOptions,
   ) => Promise<AnthropicMessagesResult>
   gitLogFetcher?: (project: WorkspaceProjectRef, sinceIso: string) => Promise<string[]>
+  /** Optional pre-analysis privacy/auto-tag pass executed before scheduled cloud reads. */
+  beforeScheduledAnalysis?: (logicalDate: string) => Promise<unknown>
+  /** Upper bound for `beforeScheduledAnalysis` so an unreachable local model never stalls scheduling. */
+  beforeScheduledAnalysisTimeoutMs?: number
 }
 
 /**
@@ -168,6 +173,7 @@ export class IntentTodoService {
   private runError: string | null = null
   private runStateDate: string | null = null
   private inflightAnalysis: Promise<IntentTodoRefreshResult> | null = null
+  private inflightSchedule: Promise<void> | null = null
   private tickTimer: ReturnType<typeof setInterval> | null = null
   private disposed = false
   private autoRetryDate: string | null = null
@@ -335,11 +341,43 @@ export class IntentTodoService {
     }
   }
 
+  private async runBeforeScheduledHook(logicalDate: string): Promise<void> {
+    const hook = this.options.beforeScheduledAnalysis
+    if (!hook) return
+    const timeoutMs = this.options.beforeScheduledAnalysisTimeoutMs ?? DEFAULT_BEFORE_SCHEDULED_TIMEOUT_MS
+    let timer: ReturnType<typeof setTimeout> | null = null
+    try {
+      await Promise.race([
+        Promise.resolve().then(() => hook(logicalDate)),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeoutMs)
+          timer.unref?.()
+        }),
+      ])
+    } catch {
+      /* never fail or block scheduling if pre-analysis auto-tag hook fails */
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
   /**
    * Checks whether the current Shanghai time has passed today's 04:00 cutover and
    * triggers one idempotent incremental run if today has not yet succeeded.
    */
-  async checkSchedule(_trigger: 'boot' | 'tick' | 'wake' | 'config'): Promise<void> {
+  async checkSchedule(trigger: 'boot' | 'tick' | 'wake' | 'config'): Promise<void> {
+    if (this.disposed) return
+    if (this.inflightSchedule) {
+      return this.inflightSchedule
+    }
+    const run = this.executeCheckSchedule(trigger).finally(() => {
+      this.inflightSchedule = null
+    })
+    this.inflightSchedule = run
+    return run
+  }
+
+  private async executeCheckSchedule(_trigger: 'boot' | 'tick' | 'wake' | 'config'): Promise<void> {
     if (this.disposed) return
     await this.store.runHousekeepingIfNeeded().catch(() => false)
 
@@ -360,6 +398,10 @@ export class IntentTodoService {
       }
       return
     }
+
+    // Ensure local/JEV privacy auto-tagging runs BEFORE cloud intent analysis reads today's journal
+    await this.runBeforeScheduledHook(logicalDate)
+    if (this.disposed) return
 
     // Do not auto-activate or create empty snapshots for a day that has zero journal entries yet
     const dayCheck = await this.options.journalStore.getDay(logicalDate).catch(() => null)
@@ -451,6 +493,7 @@ export class IntentTodoService {
       processedEntryHashes: this.store.getProcessedEntryHashes(),
       processedEntryBodies: this.store.getProcessedEntryBodies(),
       openItems: this.store.getOpenItemsForDedup(),
+      closedItems: this.store.getClosedItemsForDate(targetDate),
       droppedFingerprints: this.store.getDroppedFingerprints(),
       resolvedConfig,
       providerName,
@@ -496,6 +539,7 @@ export class IntentTodoService {
       candidates: result.candidates,
       stats: result.stats,
       deskRoot: this.options.journalStore.getDeskRoot(),
+      forceReanalyze: modelChangedSinceLastRun,
     })
 
     this.runState = 'ready'

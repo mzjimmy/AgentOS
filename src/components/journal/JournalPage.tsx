@@ -37,8 +37,10 @@ import {
   formatWeekdayLabel,
   getJournalDesktopApi,
   getWeekDates,
+  isFutureJournalDate,
   planJournalDayLayout,
   shiftDateString,
+  shouldShowLegacySyncButton,
 } from './journal-ui-helpers'
 
 function parseJournalAnchorHash(): { date?: string; entryId?: string } {
@@ -713,24 +715,26 @@ export function JournalPage({
                 </span>
               ) : null}
 
-              <button
-                type="button"
-                className="journal-sync-btn"
-                disabled={syncState.kind === 'syncing' || config?.legacyDbAvailable === false}
-                title={
-                  config?.legacyDbAvailable === false
-                    ? t('journal.legacyDbUnavailable')
-                    : t('journal.syncLegacyTitle')
-                }
-                onClick={() => void handleSyncLegacy()}
-              >
-                <IconInline name="refresh" />
-                <span>
-                  {syncState.kind === 'syncing'
-                    ? t('journal.syncingLegacy')
-                    : t('journal.syncLegacy')}
-                </span>
-              </button>
+              {!isFutureJournalDate(selectedDate, todayDate) ? (
+                <button
+                  type="button"
+                  className="journal-sync-btn"
+                  disabled={syncState.kind === 'syncing' || config?.legacyDbAvailable === false}
+                  title={
+                    config?.legacyDbAvailable === false
+                      ? t('journal.legacyDbUnavailable')
+                      : t('journal.syncLegacyTitle')
+                  }
+                  onClick={() => void handleSyncLegacy()}
+                >
+                  <IconInline name="refresh" />
+                  <span>
+                    {syncState.kind === 'syncing'
+                      ? t('journal.syncingLegacy')
+                      : t('journal.syncLegacy')}
+                  </span>
+                </button>
+              ) : null}
 
               {saveNotice === 'saved' ? (
                 <span className="journal-status-pill">
@@ -913,7 +917,7 @@ export function JournalPage({
                   : t('journal.emptyDayTitle')}
               </p>
               <p className="journal-empty-subtitle">{t('journal.emptyDayBody')}</p>
-              {config?.legacyDbAvailable && syncState.kind === 'idle' ? (
+              {shouldShowLegacySyncButton(selectedDate, todayDate, config?.legacyDbAvailable) && syncState.kind === 'idle' ? (
                 <button
                   type="button"
                   className="journal-empty-sync-cta"

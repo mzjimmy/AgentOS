@@ -97,6 +97,14 @@ export type MergeAnalysisInput = {
   candidates: CandidateIntentTodo[]
   stats: Omit<IntentTodoRunStats, 'createdCount' | 'mergedCount'>
   deskRoot?: string
+  forceReanalyze?: boolean
+}
+
+function normalizeDedupTitle(title: string): string {
+  return String(title || '')
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, '')
+    .trim()
 }
 
 const URGENCY_RANK: Record<IntentTodoUrgency, number> = {
@@ -323,6 +331,19 @@ export class IntentTodoStore {
   private applyHousekeeping(state: IntentTodoStoreState, todayLogicalDate: string, nowIso: string): boolean {
     let mutated = false
 
+    const recordDroppedFingerprint = (title: string) => {
+      const norm = normalizeDedupTitle(title)
+      if (!norm) return
+      const exists = state.droppedFingerprints.some((fp) => normalizeDedupTitle(fp.title) === norm)
+      if (!exists) {
+        state.droppedFingerprints.push({
+          title,
+          droppedAt: nowIso,
+          logicalDate: todayLogicalDate,
+        })
+      }
+    }
+
     for (const item of Object.values(state.items)) {
       // 1a. Auto-expire untouched `pending` items after 3 days
       if (item.status === 'pending') {
@@ -336,6 +357,7 @@ export class IntentTodoStore {
             action: 'auto_archived',
             note: `超过 ${INTENT_TODO_PENDING_EXPIRE_DAYS} 天未决策自动沉睡归档`,
           })
+          recordDroppedFingerprint(item.title)
           mutated = true
         }
         continue
@@ -353,6 +375,7 @@ export class IntentTodoStore {
             action: 'auto_archived',
             note: `超过 ${INTENT_TODO_AUTO_ARCHIVE_DAYS} 天未处理自动归档`,
           })
+          recordDroppedFingerprint(item.title)
           mutated = true
         }
       }
@@ -429,6 +452,32 @@ export class IntentTodoStore {
       }))
   }
 
+  getClosedItemsForDate(logicalDate: string): Array<{
+    id: string
+    title: string
+    track: IntentTodoTrack
+    status: string
+    anchorEntryIds: string[]
+  }> {
+    const state = this.readStateSync()
+    const snapshotIds = new Set(state.runDates[logicalDate]?.itemIds ?? [])
+    return Object.values(state.items)
+      .filter(
+        (item) =>
+          (item.status === 'done' || item.status === 'dropped') &&
+          (snapshotIds.has(item.id) ||
+            item.firstSeenDate === logicalDate ||
+            item.lastMentionedDate === logicalDate),
+      )
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        track: item.track,
+        status: item.status,
+        anchorEntryIds: item.anchors.map((a) => a.entryId),
+      }))
+  }
+
   getDroppedFingerprints(): DroppedFingerprint[] {
     return this.readStateSync().droppedFingerprints
   }
@@ -478,12 +527,32 @@ export class IntentTodoStore {
       const createdIds: string[] = []
       const mergedIds: string[] = []
       const touchedItemIds = new Set<string>()
+      const prevDayIds = new Set(state.runDates[input.logicalDate]?.itemIds ?? [])
+      const droppedTitleSet = new Set(
+        state.droppedFingerprints.map((fp) => normalizeDedupTitle(fp.title)).filter(Boolean),
+      )
+
+      const findSameDayItemByTitle = (title: string): IntentTodoItem | null => {
+        const norm = normalizeDedupTitle(title)
+        if (!norm) return null
+        for (const item of Object.values(state.items)) {
+          const belongsToDay =
+            prevDayIds.has(item.id) ||
+            item.firstSeenDate === input.logicalDate ||
+            item.lastMentionedDate === input.logicalDate
+          if (belongsToDay && normalizeDedupTitle(item.title) === norm) {
+            return item
+          }
+        }
+        return null
+      }
 
       for (const cand of input.candidates) {
-        const existing =
+        const existingById =
           cand.matchesExistingId && state.items[cand.matchesExistingId]
             ? state.items[cand.matchesExistingId]
             : null
+        const existing = existingById ?? findSameDayItemByTitle(cand.title)
 
         if (existing) {
           // Append only truly new anchors
@@ -497,7 +566,19 @@ export class IntentTodoStore {
               addedAnchor = true
             }
           }
-          existing.lastMentionedDate = input.logicalDate
+
+          const isHistoricalBackfill =
+            Boolean(existing.lastMentionedDate) && input.logicalDate < existing.lastMentionedDate
+          if (!isHistoricalBackfill) {
+            existing.lastMentionedDate = input.logicalDate
+          }
+
+          // Never reopen, escalate, or duplicate an already-closed (`done` / `dropped`) item
+          if (existing.status === 'done' || existing.status === 'dropped') {
+            mergedIds.push(existing.id)
+            touchedItemIds.add(existing.id)
+            continue
+          }
 
           // If analysis newly confirms completion, auto-close pending items unless the user explicitly restored them
           if (cand.suggestedDone) {
@@ -517,6 +598,7 @@ export class IntentTodoStore {
           // Re-mentioned open item escalates urgency without clobbering user's decision status
           if (
             addedAnchor &&
+            !isHistoricalBackfill &&
             (existing.status === 'pending' || existing.status === 'later')
           ) {
             const nextUrgency = escalateUrgency(existing.urgency)
@@ -528,7 +610,7 @@ export class IntentTodoStore {
                 note: `日记再次提及，紧迫度升至 ${nextUrgency}`,
               })
             }
-            // If a snoozed `later` item was mentioned again today, make it due today
+            // If a snoozed `later` item was mentioned again on a current/newer day, make it due then
             if (existing.status === 'later') {
               existing.snoozeUntil = input.logicalDate
             }
@@ -536,6 +618,12 @@ export class IntentTodoStore {
 
           mergedIds.push(existing.id)
           touchedItemIds.add(existing.id)
+          continue
+        }
+
+        // Guard against recreating recently dropped or auto-archived items on forceReanalyze
+        const normCandTitle = normalizeDedupTitle(cand.title)
+        if (input.forceReanalyze && normCandTitle && droppedTitleSet.has(normCandTitle)) {
           continue
         }
 
@@ -595,6 +683,18 @@ export class IntentTodoStore {
       const preserveIncrementalStats =
         Boolean(prevSnapshot) && input.stats.newHumanEntries === 0 && createdIds.length === 0 && mergedIds.length === 0
 
+      const maxHumanForDay = Math.max(0, input.stats.scannedEntries - input.stats.skippedPrivate)
+      const resolvedNewHumanEntries = input.forceReanalyze
+        ? Math.min(input.stats.newHumanEntries, maxHumanForDay)
+        : preserveIncrementalStats
+          ? Math.min(prevSnapshot!.stats.newHumanEntries, maxHumanForDay)
+          : Math.min((prevSnapshot?.stats.newHumanEntries ?? 0) + input.stats.newHumanEntries, maxHumanForDay)
+      const resolvedIgnoredNoiseCount = input.forceReanalyze
+        ? input.stats.ignoredNoiseCount
+        : preserveIncrementalStats
+          ? prevSnapshot!.stats.ignoredNoiseCount
+          : (prevSnapshot?.stats.ignoredNoiseCount ?? 0) + input.stats.ignoredNoiseCount
+
       let reportPath: string | null = null
       const snapshot: IntentTodoRunSnapshot = {
         logicalDate: input.logicalDate,
@@ -605,12 +705,8 @@ export class IntentTodoStore {
         itemIds: combinedItemIds,
         stats: {
           ...input.stats,
-          newHumanEntries: preserveIncrementalStats
-            ? prevSnapshot!.stats.newHumanEntries
-            : (prevSnapshot?.stats.newHumanEntries ?? 0) + input.stats.newHumanEntries,
-          ignoredNoiseCount: preserveIncrementalStats
-            ? prevSnapshot!.stats.ignoredNoiseCount
-            : (prevSnapshot?.stats.ignoredNoiseCount ?? 0) + input.stats.ignoredNoiseCount,
+          newHumanEntries: resolvedNewHumanEntries,
+          ignoredNoiseCount: resolvedIgnoredNoiseCount,
           createdCount: createdIds.length,
           mergedCount: mergedIds.length,
         },

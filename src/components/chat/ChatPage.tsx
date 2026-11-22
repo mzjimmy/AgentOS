@@ -498,6 +498,8 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
   } | null>(null)
   const newThreadModelPick = projectHomeModelPick ?? projectDefaultModelPick
   const scrollIntentRef = useRef<'none' | 'force-bottom'>('none')
+  /** 实时记录用户是否处于底部跟随态（由 scroll 事件更新，避免 ResizeObserver 在内容增高后误判脱底） */
+  const pinnedToBottomRef = useRef(true)
   /** 取消 / Esc 关闭编辑时抑制贴底，避免 ResizeObserver 误判 isNearBottom 把视口滚到底 */
   const suppressTranscriptResizeStickRef = useRef(false)
   const suppressTranscriptResizeStickTimerRef = useRef<number | null>(null)
@@ -1431,6 +1433,7 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
       if (hasSavedScrollTop && restoreThreadScrollTop(activeThreadId)) {
         scrollIntentRef.current = 'none'
         isFirstTranscriptLayoutRef.current = false
+        pinnedToBottomRef.current = isNearBottom(sr)
         return
       }
       stick = true
@@ -1438,10 +1441,12 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
     }
     scrollIntentRef.current = 'none'
     if (stick) {
+      pinnedToBottomRef.current = true
       sr.scrollTo({ top: sr.scrollHeight, behavior: 'auto' })
       saveActiveThreadScrollTop()
       setShowScrollButton(false)
     } else {
+      pinnedToBottomRef.current = false
       syncScrollButtonVisibility()
     }
     // 内容增长由下面的 ResizeObserver 负责吸底；这里只处理切换线程与首次布局，
@@ -1453,6 +1458,7 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
     if (!sr) return
     const onScroll = () => {
       if (!hasMessages) return
+      pinnedToBottomRef.current = isNearBottom(sr)
       saveActiveThreadScrollTop()
       syncScrollButtonVisibility()
     }
@@ -1474,9 +1480,11 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
         syncScrollButtonVisibility()
         return
       }
-      if (scrollIntentRef.current === 'force-bottom' || isNearBottom(sr)) {
+      if (scrollIntentRef.current === 'force-bottom' || pinnedToBottomRef.current) {
         scrollIntentRef.current = 'none'
+        pinnedToBottomRef.current = true
         sr.scrollTo({ top: sr.scrollHeight, behavior: 'auto' })
+        saveActiveThreadScrollTop()
         setShowScrollButton(false)
         return
       }
@@ -1484,7 +1492,7 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
     })
     ro.observe(transcript)
     return () => ro.disconnect()
-  }, [hasMessages, syncScrollButtonVisibility])
+  }, [hasMessages, saveActiveThreadScrollTop, syncScrollButtonVisibility])
 
   // --- Composer `<textarea>` auto height (cap 180px) / 输入框自适应高度（上限 180px）---
 
@@ -1504,6 +1512,7 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
     if (!sr) return
     const threadId = activeThreadIdRef.current
     const targetTop = Math.max(0, sr.scrollHeight - sr.clientHeight)
+    pinnedToBottomRef.current = true
     sr.scrollTo({ top: sr.scrollHeight, behavior })
     if (threadId) threadScrollTopRef.current.set(threadId, targetTop)
     setShowScrollButton(false)
@@ -3137,8 +3146,8 @@ function playAgentDoneSound(): void {
   }
 }
 
-/** 贴底跟随：距底部小于此值视为在底部 */
-const SCROLL_STICK_THRESHOLD_PX = 96
+/** 贴底跟随：距底部小于此值视为在底部（收紧至 36px，避免轻微上滚阅读被拉回底部） */
+const SCROLL_STICK_THRESHOLD_PX = 36
 /** 滞后显示：向上滚过此距离后才出现按钮，避免临界抖动 */
 const SCROLL_SHOW_BUTTON_PX = 120
 /** 滞后隐藏：回到距底部此距离内才隐藏 */

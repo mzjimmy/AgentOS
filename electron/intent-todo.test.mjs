@@ -858,3 +858,265 @@ test('intent-todo: pure cloud analysis sends all non-private entries directly, s
     rmSync(deskRoot, { recursive: true, force: true })
   }
 })
+
+test('intent-todo: forceReanalyze never duplicates done/dropped items, preserves monotonic dates, caps human entry stats, and runs beforeScheduledAnalysis before cloud read', async () => {
+  const { IntentTodoService } = loadTsModule(resolve(rootDir, 'electron/desk/intent-todo-service.ts'))
+  const { IntentTodoStore } = loadTsModule(resolve(rootDir, 'electron/desk/intent-todo-store.ts'))
+  const userDataPath = mkdtempSync(join(tmpdir(), 'agentos-it-tier1-'))
+  const deskRoot = mkdtempSync(join(tmpdir(), 'agentos-it-desk-tier1-'))
+
+  try {
+    // 1. Store-level monotonic lastMentionedDate & snoozeUntil + autoArchived droppedFingerprint
+    let nowIso = '2026-11-22T02:00:00Z'
+    const store = new IntentTodoStore({ userDataPath, now: () => new Date(nowIso) })
+
+    const created = await store.mergeAnalysisResult({
+      logicalDate: '2026-11-22',
+      ranAt: nowIso,
+      providerName: 'MiniMax-CN',
+      modelUsed: 'MiniMax-M3.1-Flash',
+      processedHashes: ['h1'],
+      processedBodyHashes: ['b1'],
+      candidates: [
+        {
+          title: '隐藏未来日期同步按钮',
+          reason: '未来日期不应导入历史',
+          track: 'engineering',
+          urgency: 'medium',
+          suggestedProjectId: 'p1',
+          suggestedProjectName: 'AgentOS',
+          projectExplicitlyBound: true,
+          antiPatterns: [],
+          anchors: [{ date: '2026-11-22', time: '08:16', entryId: 'e_future', contentHash: 'h1' }],
+        },
+        {
+          title: '待沉睡的旧项',
+          reason: '测试自动归档指纹',
+          track: 'life',
+          urgency: 'low',
+          suggestedProjectId: null,
+          suggestedProjectName: null,
+          projectExplicitlyBound: false,
+          antiPatterns: [],
+          anchors: [{ date: '2026-11-22', time: '09:00', entryId: 'e_old', contentHash: 'h2' }],
+        },
+      ],
+      stats: { scannedEntries: 2, newHumanEntries: 2, skippedPrivate: 0, suspectedAiPaste: 0, ignoredNoiseCount: 0, durationMs: 20 },
+    })
+
+    const itemId = created.createdIds[0]
+    await store.applyDecision(itemId, { action: 'later', snoozeDays: 3 })
+    const beforeBackfill = store.getItem(itemId)
+    assert.equal(beforeBackfill.snoozeUntil, '2026-11-25')
+
+    // Re-analyzing an earlier date (2026-11-21) matching the 11-22 item must NOT regress lastMentionedDate or snoozeUntil
+    await store.mergeAnalysisResult({
+      logicalDate: '2026-11-21',
+      ranAt: '2026-11-22T02:10:00Z',
+      providerName: 'MiniMax-CN',
+      modelUsed: 'MiniMax-M3.1-Flash',
+      processedHashes: ['h_prev'],
+      processedBodyHashes: ['b_prev'],
+      candidates: [
+        {
+          matchesExistingId: itemId,
+          title: '隐藏未来日期同步按钮',
+          reason: '旧日志提及',
+          track: 'engineering',
+          urgency: 'medium',
+          suggestedProjectId: 'p1',
+          suggestedProjectName: 'AgentOS',
+          projectExplicitlyBound: true,
+          antiPatterns: [],
+          anchors: [{ date: '2026-11-21', time: '20:00', entryId: 'e_prev', contentHash: 'h_prev' }],
+        },
+      ],
+      stats: { scannedEntries: 1, newHumanEntries: 1, skippedPrivate: 0, suspectedAiPaste: 0, ignoredNoiseCount: 0, durationMs: 10 },
+    })
+    const afterBackfill = store.getItem(itemId)
+    assert.equal(afterBackfill.lastMentionedDate, '2026-11-22', 'lastMentionedDate must never regress backwards')
+    assert.equal(afterBackfill.snoozeUntil, '2026-11-25', 'historical re-analysis must not pull future snoozeUntil backwards')
+
+    // Auto-archiving stale pending item after 3 days must record a droppedFingerprint
+    nowIso = '2026-11-26T02:00:00Z'
+    const archivedChanged = await store.runHousekeepingIfNeeded()
+    assert.equal(archivedChanged, true)
+    const archivedItem = store.getItem(created.createdIds[1])
+    assert.equal(archivedItem.status, 'dropped')
+    assert.equal(archivedItem.autoArchived, true)
+    assert.equal(
+      store.getDroppedFingerprints().some((fp) => fp.title === '待沉睡的旧项'),
+      true,
+      'auto-archived items must be recorded in droppedFingerprints',
+    )
+
+    // 2. Service-level: forceReanalyze after marking item done must NOT duplicate, and stats.newHumanEntries must not double-count
+    const svcDir = mkdtempSync(join(tmpdir(), 'agentos-it-tier1-svc-'))
+    try {
+      const dayEntries = [
+        {
+          id: 'e_fix',
+          date: '2026-11-22',
+          time: '08:16',
+          ts: '2026-11-22T00:16:00Z',
+          kind: 'note',
+          body: '请修复私密条目漏判和未来日期按钮',
+          category: '工程',
+          tags: [],
+          projectRefs: ['【Mitchi Sentinel】AgentOS'],
+          source: 'feishu',
+          provenance: 'human',
+          images: [],
+        },
+        {
+          id: 'e_secret',
+          date: '2026-11-22',
+          time: '08:20',
+          ts: '2026-11-22T00:20:00Z',
+          kind: 'note',
+          body: '明天去医院复查，住址上海市徐汇区xx路18号',
+          category: '未归类',
+          tags: [],
+          projectRefs: [],
+          source: 'feishu',
+          provenance: 'human',
+          images: [],
+          private: false,
+        },
+      ]
+
+      const providers = [
+        { id: 'p-mm', name: 'MiniMax-CN', apiKey: 'sk-mm', authToken: '', baseUrl: 'https://api.minimax.example', model: 'MiniMax-M3.1-Flash', defaultHaikuModel: '', defaultSonnetModel: '', defaultOpusModel: '' },
+        { id: 'p-ant', name: 'Anthropic', apiKey: 'sk-ant', authToken: '', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-6', defaultHaikuModel: '', defaultSonnetModel: '', defaultOpusModel: '' },
+      ]
+
+      const callOrder = []
+      const llmPrompts = []
+      let llmRunIndex = 0
+      const svc = new IntentTodoService({
+        userDataPath: svcDir,
+        journalStore: {
+          getDeskRoot: () => deskRoot,
+          async getDay() {
+            callOrder.push('read_journal')
+            return { ok: true, entries: dayEntries }
+          },
+        },
+        settingsStore: {
+          getSnapshot: () => ({
+            settings: { configSource: 'settings', activeProviderId: 'p-mm', activeAnthropicModel: '', providers },
+            env: {},
+          }),
+          resolve: (pick) => {
+            const prov = pick ? providers.find((p) => p.id === pick.providerId) ?? providers[0] : providers[0]
+            return {
+              configSource: 'settings',
+              apiKey: prov.apiKey,
+              authToken: prov.authToken,
+              baseUrl: prov.baseUrl,
+              model: pick?.anthropicModel || prov.model,
+              supportsImages: true,
+            }
+          },
+        },
+        getWorkspaceState: () => ({
+          projects: [{ id: 'p_ag', name: '【Mitchi Sentinel】AgentOS', path: '/tmp/AgentOS' }],
+        }),
+        getBroker: () => null,
+        now: () => new Date('2026-11-22T02:00:00Z'),
+        gitLogFetcher: async () => [],
+        beforeScheduledAnalysis: async () => {
+          callOrder.push('auto_tag')
+          // Simulate local privacy auto-tagger flagging e_secret BEFORE cloud analysis reads it
+          dayEntries[1].private = true
+          dayEntries[1].autoApplied = { private: true }
+        },
+        callLlm: async (cfg, req) => {
+          llmRunIndex += 1
+          llmPrompts.push(req.messages[0].content)
+          if (llmRunIndex === 1) {
+            return {
+              ok: true,
+              model: cfg.model,
+              durationMs: 15,
+              text: JSON.stringify({
+                ignoredNoiseCount: 0,
+                todos: [
+                  {
+                    title: '隐藏未来日期同步按钮',
+                    reason: '未来日期不应导入',
+                    track: 'engineering',
+                    urgency: 'medium',
+                    suggestedProjectName: '【Mitchi Sentinel】AgentOS',
+                    anchorEntryIds: ['e_fix'],
+                    alreadyDone: false,
+                  },
+                ],
+              }),
+            }
+          }
+          // Second run (after cloud model switch): model tries to re-emit the already-done item (both via matchesExistingId and via duplicate title)
+          const existingDoneId = svc.getOverview('2026-11-22').resolvedItems[0]?.id
+          return {
+            ok: true,
+            model: cfg.model,
+            durationMs: 15,
+            text: JSON.stringify({
+              ignoredNoiseCount: 0,
+              todos: [
+                {
+                  matchesExistingId: existingDoneId,
+                  title: '隐藏未来日期同步按钮',
+                  reason: '再次提及',
+                  track: 'engineering',
+                  urgency: 'medium',
+                  suggestedProjectName: '【Mitchi Sentinel】AgentOS',
+                  anchorEntryIds: ['e_fix'],
+                  alreadyDone: false,
+                },
+                {
+                  title: '隐藏未来日期同步按钮',
+                  reason: '重复标题兜底测试',
+                  track: 'engineering',
+                  urgency: 'medium',
+                  suggestedProjectName: '【Mitchi Sentinel】AgentOS',
+                  anchorEntryIds: ['e_fix'],
+                  alreadyDone: false,
+                },
+              ],
+            }),
+          }
+        },
+      })
+
+      await svc.saveConfig({ providerConsentAcknowledged: true, enabled: true })
+      await svc.checkSchedule('boot')
+
+      // Boot must run auto-tag BEFORE cloud LLM sees the journal, so e_secret is filtered out
+      assert.equal(callOrder[0], 'auto_tag', 'beforeScheduledAnalysis must run before journal analysis on boot')
+      assert.equal(llmPrompts.length, 1)
+      assert.doesNotMatch(llmPrompts[0], /徐汇区/, 'entry marked private by beforeScheduledAnalysis must never reach cloud LLM')
+
+      const ov1 = svc.getOverview('2026-11-22')
+      assert.equal(ov1.pendingItems.length, 1)
+      assert.equal(ov1.snapshot.stats.skippedPrivate, 1)
+      assert.equal(ov1.snapshot.stats.newHumanEntries, 1)
+
+      // Mark item done, switch cloud model -> forceReanalyze
+      await svc.decideItem(ov1.pendingItems[0].id, { action: 'done' }, '2026-11-22')
+      await svc.saveConfig({ modelPick: { providerId: 'p-ant', anthropicModel: 'claude-sonnet-4-6' } })
+      const res2 = await svc.refreshAnalysis('2026-11-22')
+      assert.equal(res2.ok, true)
+      assert.equal(llmPrompts.length, 2)
+      assert.match(llmPrompts[1], /当日已闭环/, 'closed items must be passed to prompt on re-analysis')
+      assert.equal(res2.overview.pendingItems.length, 0, 'done item must never be resurrected as a duplicate pending item')
+      assert.equal(res2.overview.resolvedItems.length, 1, 'resolved item count must remain 1 with zero duplicates')
+      assert.equal(res2.overview.snapshot.stats.newHumanEntries, 1, 'forceReanalyze must not double-count newHumanEntries')
+    } finally {
+      rmSync(svcDir, { recursive: true, force: true })
+    }
+  } finally {
+    rmSync(userDataPath, { recursive: true, force: true })
+    rmSync(deskRoot, { recursive: true, force: true })
+  }
+})

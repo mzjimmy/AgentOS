@@ -45,6 +45,7 @@ import {
 import { ClaudeChatEventCoalescer } from './claude-agent-runner/event-coalescer'
 import { resolveClaudeCodeExecutablePath } from './claude-agent-runner/executable'
 import { fileDiffFromPostToolUse } from './claude-agent-runner/file-diff'
+import { resolveAutoPermissionDecision } from './claude-agent-runner/permission'
 import type { RuntimeEditRunnerHook } from './runtime-edit-coordinator'
 import { buildSdkPromptInput, normalizeSubmitAttachments, resolveWorkspaceCwd } from './claude-agent-runner/input'
 import { buildMcpPermissionCopy, buildMcpRuntimeOptions, mergeMcpRuntimeOptions } from './claude-agent-runner/mcp'
@@ -983,6 +984,10 @@ export class ClaudeAgentRunner {
 
     const permissionRequestId = randomUUID()
     const toolUseId = options.toolUseID || `permission-${permissionRequestId}`
+    const autoDecision = resolveAutoPermissionDecision(activeRequest.permissionMode, toolName, input, toolUseId)
+    if (autoDecision) {
+      return autoDecision
+    }
     const pendingResult = new Promise<PermissionResult>((resolve) => {
       const abortListener = () => {
         this.resolvePendingPermission(permissionRequestId, {

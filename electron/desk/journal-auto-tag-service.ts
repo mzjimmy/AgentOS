@@ -151,7 +151,9 @@ function buildProjectHint(project: JournalAutoTagWorkspaceProject, aliases: stri
   } else if (ownName.includes('jevquant') || ownName.includes('quant')) {
     extraHints.push('量化交易策略与回测')
   } else if (ownName.includes('agentos')) {
-    extraHints.push('AgentOS桌面端、时间日记、意图待办、派发对话、工作台、侧边栏、权限弹窗、对话框滚动')
+    extraHints.push(
+      'AgentOS桌面端、时间日记、意图待办、派发对话、工作台、侧边栏、权限弹窗、对话框滚动、JEV、自动打标、自动分类、私密分类、飞书桥接、历史日记同步',
+    )
   }
   const aliasText = aliases.length > 0 ? `别名：${aliases.join('、')}` : ''
   const extraText = extraHints.length > 0 ? `特征：${extraHints.join('；')}` : ''
@@ -354,7 +356,14 @@ export class JournalAutoTagService {
 
     const allEntries = dayRes.entries ?? []
     const candidates = allEntries.filter(isAutoTagCandidate)
-    const batch = candidates.slice(0, JOURNAL_AUTO_TAG_MAX_ENTRIES_PER_RUN)
+    // Prioritize uncached entries first so newly added journal entries are never starved behind older cached ones
+    const orderedCandidates = options.force
+      ? candidates
+      : [
+          ...candidates.filter((entry) => !this.store.getDecision(computeJournalEntryBodyHash(entry))),
+          ...candidates.filter((entry) => Boolean(this.store.getDecision(computeJournalEntryBodyHash(entry)))),
+        ]
+    const batch = orderedCandidates.slice(0, JOURNAL_AUTO_TAG_MAX_ENTRIES_PER_RUN)
     const skipped = allEntries.length - batch.length
     const projectCandidates = this.buildCandidates()
 

@@ -381,3 +381,66 @@ test('auto-tag v2: autoApplied metadata (private, category, projectRefs, tags) s
   assert.deepEqual(parsed[0].autoApplied?.tags, ['开发履历'])
   assert.equal(parsed[0].autoApplied?.pipeline, 'v2')
 })
+
+test('auto-tag v2: processes >24 entries per day without truncating, prioritizes uncached entries, and enriches AgentOS JEV/auto-tag hints', async () => {
+  const contract = loadTsModule(resolve(rootDir, 'src/journal-auto-tag-contract.ts'))
+  assert.ok(
+    contract.JOURNAL_AUTO_TAG_MAX_ENTRIES_PER_RUN >= 100,
+    `JOURNAL_AUTO_TAG_MAX_ENTRIES_PER_RUN (${contract.JOURNAL_AUTO_TAG_MAX_ENTRIES_PER_RUN}) must be >= 100`,
+  )
+
+  const entries = Array.from({ length: 30 }, (_, idx) =>
+    makeEntry({
+      id: `je_bulk_${idx + 1}`,
+      time: `10:${String(idx).padStart(2, '0')}`,
+      body: `第 ${idx + 1} 条测试日记：验证 JEV 自动打标与私密分类效果`,
+    }),
+  )
+
+  const capturedPayloads = []
+  const h = createHarness({
+    entries,
+    jevApiKey: 'sk-jev-test-bulk',
+    jevAnswers: (payload) => {
+      capturedPayloads.push(payload)
+      return {
+        is_private: { noul: 0.05 },
+        category: { choice: '工程', confidence: 0.92 },
+        project: { choice: 'C1', confidence: 0.9 },
+        entry_kind: { choice: 'actionable', confidence: 0.88 },
+      }
+    },
+  })
+  try {
+    h.service.saveConfig({ engine: 'jev' })
+    const res = await h.service.runAutoTag({ date: DATE })
+    assert.equal(res.status, 'completed')
+    assert.equal(res.scanned, 30, 'all 30 entries must be processed without 24-entry truncation')
+    assert.equal(res.decided, 30)
+    assert.equal(res.skipped, 0)
+    assert.equal(capturedPayloads.length, 30)
+
+    const c1Hint = capturedPayloads[0]?.questions?.project?.criteria?.C1 || ''
+    assert.match(c1Hint, /JEV/, 'AgentOS project hint must include JEV')
+    assert.match(c1Hint, /自动打标|自动分类/, 'AgentOS project hint must include auto-tagging keywords')
+    assert.match(c1Hint, /私密分类|飞书桥接/, 'AgentOS project hint must include privacy/Feishu bridge keywords')
+
+    // Now add 75 more entries (total 105 > 100 cap): the 75 brand-new uncached entries must be prioritized ahead of cached ones
+    const extraEntries = Array.from({ length: 75 }, (_, idx) =>
+      makeEntry({
+        id: `je_new_${idx + 1}`,
+        time: `11:${String(idx % 60).padStart(2, '0')}`,
+        body: `新增未缓存日记 #${idx + 1}：需要优先分类`,
+      }),
+    )
+    h.store.day.push(...extraEntries)
+    capturedPayloads.length = 0
+    const res2 = await h.service.runAutoTag({ date: DATE })
+    assert.equal(res2.status, 'completed')
+    assert.equal(res2.scanned, 100)
+    assert.equal(res2.skipped, 5)
+    assert.equal(capturedPayloads.length, 75, 'all 75 newly added uncached entries must be processed even when total > 100')
+  } finally {
+    h.cleanup()
+  }
+})

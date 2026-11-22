@@ -65,6 +65,7 @@ export type AnalyzerInput = {
   processedEntryHashes: Record<string, string>
   processedEntryBodies?: Record<string, string>
   openItems: Array<{ id: string; title: string; track: IntentTodoTrack; status: string }>
+  closedItems?: Array<{ id: string; title: string; track: IntentTodoTrack; status: string; anchorEntryIds?: string[] }>
   droppedFingerprints: DroppedFingerprint[]
   resolvedConfig: Pick<ClaudeAgentResolvedConfig, 'apiKey' | 'authToken' | 'baseUrl' | 'model'>
   providerName: string
@@ -561,6 +562,17 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
     )
   }
 
+  if (input.closedItems && input.closedItems.length > 0) {
+    userSections.push(
+      '',
+      '## 当日已闭环/已忽略事项（命中请直接跳过，或填 matchesExistingId，绝不可重复新建）',
+      ...input.closedItems.map(
+        (i) =>
+          `- id=${i.id} | [${i.track}] ${i.title} (${i.status})${i.anchorEntryIds?.length ? ` | anchors=${i.anchorEntryIds.join(',')}` : ''}`,
+      ),
+    )
+  }
+
   if (input.droppedFingerprints.length > 0) {
     userSections.push(
       '',
@@ -688,7 +700,10 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
   // Map validated raw todos onto concrete PreparedEntry anchors and workspace projects
   const entryById = new Map(budgetedEntries.map((item) => [item.entry.id, item]))
   const projectByLowerName = new Map(input.projects.map((p) => [p.name.toLowerCase(), p]))
-  const openIdSet = new Set(input.openItems.map((i) => i.id))
+  const knownIdSet = new Set([
+    ...input.openItems.map((i) => i.id),
+    ...(input.closedItems ?? []).map((i) => i.id),
+  ])
 
   const candidates: CandidateIntentTodo[] = []
   for (const row of parsed.payload.todos) {
@@ -757,7 +772,7 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
     }
 
     const matchesExistingId =
-      typeof row.matchesExistingId === 'string' && openIdSet.has(row.matchesExistingId)
+      typeof row.matchesExistingId === 'string' && knownIdSet.has(row.matchesExistingId)
         ? row.matchesExistingId
         : null
 

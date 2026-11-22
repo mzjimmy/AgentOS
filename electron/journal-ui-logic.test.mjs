@@ -621,3 +621,25 @@ test('resolvePhotoOrientation classifies portrait, landscape, and square dimensi
   assert.equal(helpers.resolvePhotoOrientation(1000, 1000), 'square')
   assert.equal(helpers.resolvePhotoOrientation(0, 100), 'landscape')
 })
+
+test('shouldShowLegacySyncButton hides legacy sync controls on future dates and wires into JournalPage', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+  assert.equal(helpers.isFutureJournalDate('2026-11-23', '2026-11-22'), true)
+  assert.equal(helpers.isFutureJournalDate('2026-12-01', '2026-11-22'), true)
+  assert.equal(helpers.isFutureJournalDate('2026-11-22', '2026-11-22'), false)
+  assert.equal(helpers.isFutureJournalDate('2026-11-21', '2026-11-22'), false)
+
+  // Future dates never show the legacy history sync button even if legacy DB is available
+  assert.equal(helpers.shouldShowLegacySyncButton('2026-11-23', '2026-11-22', true), false)
+  assert.equal(helpers.shouldShowLegacySyncButton('2026-12-31', '2026-11-22', true), false)
+  // Today and past dates show it when legacy DB is available
+  assert.equal(helpers.shouldShowLegacySyncButton('2026-11-22', '2026-11-22', true), true)
+  assert.equal(helpers.shouldShowLegacySyncButton('2026-11-21', '2026-11-22', true), true)
+  // Unavailable legacy DB hides it
+  assert.equal(helpers.shouldShowLegacySyncButton('2026-11-21', '2026-11-22', false), false)
+
+  // Verify JournalPage actually gates both the empty-state CTA and hero sync button
+  const pageSource = readFileSync(resolve(rootDir, 'src/components/journal/JournalPage.tsx'), 'utf8')
+  assert.match(pageSource, /shouldShowLegacySyncButton/)
+  assert.match(pageSource, /isFutureJournalDate/)
+})

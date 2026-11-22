@@ -14,7 +14,7 @@ import type { JournalCategory } from './journal-contract'
  */
 
 export const JOURNAL_AUTO_TAG_PIPELINE_VERSION = 'v2'
-export const JOURNAL_AUTO_TAG_MAX_ENTRIES_PER_RUN = 24
+export const JOURNAL_AUTO_TAG_MAX_ENTRIES_PER_RUN = 100
 export const JOURNAL_AUTO_TAG_MAX_BODY_CHARS = 1500
 export const JOURNAL_AUTO_TAG_CONCURRENCY = 3
 export const JOURNAL_AUTO_TAG_DEFAULT_LOCAL_BASE_URL = 'http://192.168.31.57:1234/v1'

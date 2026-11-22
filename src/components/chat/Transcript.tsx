@@ -339,8 +339,28 @@ function ProcessTraceBlock({
 }) {
   const { t } = useI18n()
   const [isOpen, setIsOpen] = useState(false)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const pinnedBottomRef = useRef(true)
   const settledLabel = durationMs ? formatDuration(durationMs) : ''
   const hasDuration = Boolean(settledLabel) || liveStartedAt !== undefined
+  const hasProcessBody = isOpen && processItems.length > 0
+
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!hasProcessBody || !el) return
+    const onScroll = () => {
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+      pinnedBottomRef.current = remaining <= 28
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [hasProcessBody])
+
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (!hasProcessBody || !isRunning || !el || !pinnedBottomRef.current) return
+    el.scrollTop = el.scrollHeight
+  }, [hasProcessBody, isRunning, processItems])
 
   if (!hasDuration || (!isRunning && processItems.length === 0)) return null
 
@@ -358,7 +378,11 @@ function ProcessTraceBlock({
         {settledLabel ? <span>{settledLabel}</span> : liveStartedAt !== undefined ? <LiveProcessDuration startedAt={liveStartedAt} /> : null}
         <IconInline name="chevron" />
       </button>
-      {isOpen && processItems.length > 0 ? <div className="chat-process-group__body">{processItems.map((item) => renderItem(item))}</div> : null}
+      {isOpen && processItems.length > 0 ? (
+        <div className="chat-process-group__body" ref={bodyRef}>
+          {processItems.map((item) => renderItem(item))}
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -899,10 +923,6 @@ const FileDiffRow = memo(function FileDiffRow({
   const deletions = item.files.reduce((sum, file) => sum + file.deletions, 0)
   const canRewind = Boolean(item.status !== 'reverted' && (rewindUsesBrokerLookup || item.checkpointId))
   const canReview = item.status !== 'reviewed' && item.status !== 'reverted'
-
-  useEffect(() => {
-    if (item.status === 'captured') setIsOpen(true)
-  }, [item.status])
 
   return (
     <section className={`file-diff-row file-diff-row--${item.status}`} data-transcript-item-id={item.id} aria-label={t('chat.fileDiffAria')}>

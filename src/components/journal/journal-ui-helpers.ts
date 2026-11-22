@@ -818,3 +818,24 @@ export function resolvePhotoOrientation(width?: number, height?: number): Journa
   return 'square'
 }
 
+/** True when `selectedDate` (`YYYY-MM-DD`) is strictly after `todayDate` (`YYYY-MM-DD`). */
+export function isFutureJournalDate(selectedDate: string, todayDate: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate) || !/^\d{4}-\d{2}-\d{2}$/.test(todayDate)) {
+    return false
+  }
+  return selectedDate > todayDate
+}
+
+/**
+ * Legacy SentinelLab history sync only makes sense for today or historical dates;
+ * future dates must never display the legacy import CTA.
+ */
+export function shouldShowLegacySyncButton(
+  selectedDate: string,
+  todayDate: string,
+  legacyDbAvailable?: boolean,
+): boolean {
+  if (!legacyDbAvailable) return false
+  return !isFutureJournalDate(selectedDate, todayDate)
+}
+

@@ -144,7 +144,6 @@ const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: string }) 
     let cancelled = false
 
     setRenderState('rendering')
-    setSvg('')
     setRenderedCode(settledCode)
     setWasRepaired(false)
     setError('')
@@ -255,13 +254,15 @@ const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: string }) 
         </div>
       </figcaption>
       <div className="mermaid-diagram__stage">
-        {renderState === 'rendering' ? (
+        {renderState === 'rendering' && !svg ? (
           <div className="mermaid-diagram__loading" role="status" aria-live="polite">
             <span />
             <strong>{t('chat.mermaidRendering')}</strong>
           </div>
         ) : null}
-        {renderState === 'ready' ? <div className="mermaid-diagram__svg" dangerouslySetInnerHTML={{ __html: svg }} /> : null}
+        {svg && renderState !== 'failed' ? (
+          <div className="mermaid-diagram__svg" dangerouslySetInnerHTML={{ __html: svg }} />
+        ) : null}
         {renderState === 'failed' ? (
           <div className="mermaid-diagram__error" role="alert">
             <strong>{t('chat.mermaidRenderFailed')}</strong>

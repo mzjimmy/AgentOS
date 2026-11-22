@@ -307,6 +307,7 @@ function getIntentTodoService(): IntentTodoService {
       getWorkspaceState: () => chatWorkspaceStore?.current() ?? chatWorkspaceStore?.read() ?? null,
       getBroker: () => (PROJECT_CHAT_BROKER_V2_ENABLED ? projectChatBroker : null),
       isOnline: () => net.isOnline(),
+      beforeScheduledAnalysis: (logicalDate) => getJournalAutoTagService().runAutoTag({ date: logicalDate }),
       onChanged: (event) => {
         for (const windowItem of BrowserWindow.getAllWindows()) {
           if (!windowItem.isDestroyed()) {
