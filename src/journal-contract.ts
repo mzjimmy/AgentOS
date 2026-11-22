@@ -73,6 +73,27 @@ export type JournalEntry = {
   /** Optional moment subtitle/artist/meta */
   momentTitle?: string | null
   momentSubtitle?: string | null
+  /** Whether this entry is marked private (excluded from AI intent analysis) */
+  private?: boolean
+  /** Machine-applied marks, so a later auto run never overwrites a manual edit */
+  autoApplied?: JournalAutoAppliedMeta
+}
+
+/**
+ * Records which marks on an entry were applied by the local auto-tagger.
+ * Absent on entries that were only ever edited by the user.
+ */
+export type JournalAutoAppliedMeta = {
+  /** Project refs that the auto-tagger added (user-authored refs are never listed here) */
+  projectRefs?: string[]
+  /** True when the auto-tagger (not the user) set the private flag */
+  private?: boolean
+  /** True when the auto-tagger (not the user) upgraded category from 未归类 */
+  category?: boolean
+  /** Concise semantic tags added by the auto-tagger */
+  tags?: string[]
+  decidedAt?: string
+  pipeline?: string
 }
 
 export type JournalDaySummary = {
@@ -152,6 +173,7 @@ export type CreateJournalEntryInput = {
   relatedNote?: string | null
   momentTitle?: string | null
   momentSubtitle?: string | null
+  private?: boolean
 }
 
 export type CreateJournalEntryResult =
@@ -175,6 +197,8 @@ export type UpdateJournalEntryInput = {
   relatedNote?: string | null
   momentTitle?: string | null
   momentSubtitle?: string | null
+  private?: boolean
+  autoApplied?: JournalAutoAppliedMeta
 }
 
 export type UpdateJournalEntryResult =

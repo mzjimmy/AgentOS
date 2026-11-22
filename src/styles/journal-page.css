@@ -671,6 +671,41 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   word-break: break-word;
 }
 
+.journal-card-body--clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--j-clamp-lines, 5);
+  overflow: hidden;
+}
+
+.journal-card-expand-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+.journal-card-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--j-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--j-dai);
+  font-family: var(--j-font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.journal-card-expand-btn:hover {
+  background: var(--j-dai-soft);
+  border-color: color-mix(in srgb, var(--j-dai) 40%, transparent);
+}
+
 .journal-card-body--compact {
   font-size: 14px;
   line-height: 1.6;
@@ -784,7 +819,22 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
 
 .journal-photo-grid--single .journal-photo-tile {
   aspect-ratio: 16 / 10;
-  max-height: 290px;
+  max-height: 320px;
+}
+
+.journal-photo-grid--single .journal-photo-tile[data-orientation='portrait'] {
+  aspect-ratio: 4 / 3;
+  max-height: 360px;
+}
+
+.journal-card--photo[data-layout-row-span='2'] .journal-photo-grid--single {
+  flex: 1;
+  min-height: 0;
+}
+
+.journal-card--photo[data-layout-row-span='2'] .journal-photo-grid--single .journal-photo-tile {
+  height: 100%;
+  max-height: 440px;
 }
 
 .journal-photo-grid:not(.journal-photo-grid--single) .journal-photo-tile {
@@ -795,7 +845,8 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   width: 100%;
   height: 100%;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
   transition: transform 0.25s ease;
 }
 
@@ -865,8 +916,8 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
 /* --- Species 4: Moment (Cream Oval / Pill Card) --- */
 
 .journal-card--moment {
-  padding: 16px 26px;
-  border-radius: 999px;
+  padding: 16px 24px;
+  border-radius: 26px;
   background: var(--j-sunken);
   border: 1px solid var(--j-line);
   text-align: center;
@@ -880,13 +931,18 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   position: relative;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .journal-moment-head .journal-card-actions {
   position: absolute;
   right: 0;
+}
+
+.journal-card--moment .journal-card-chips {
+  justify-content: center;
 }
 
 .journal-moment-title {
@@ -1167,7 +1223,8 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
 .journal-week-item-thumb {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
   display: block;
 }
 
@@ -2341,4 +2398,193 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   border-color: var(--j-dai);
   color: var(--j-dai);
   background: var(--j-dai-soft);
+}
+
+/* --- Private Marker & Anchor Jump Highlight --- */
+
+.journal-private-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--j-cinnabar-soft);
+  color: var(--j-cinnabar);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.journal-auto-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px dashed var(--j-dai);
+  color: var(--j-dai);
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+/* Machine-applied marks read as provisional: dashed outline, muted fill. */
+.journal-private-badge.is-auto {
+  background: transparent;
+  border: 1px dashed var(--j-cinnabar);
+}
+
+.journal-project-chip.is-auto {
+  background: transparent;
+  border: 1px dashed var(--j-dai);
+}
+
+.journal-card-action-btn.is-private-active {
+  color: var(--j-cinnabar);
+  background: var(--j-cinnabar-soft);
+}
+
+.journal-tool-pill.is-private-active {
+  border-color: var(--j-cinnabar);
+  background: var(--j-cinnabar-soft);
+  color: var(--j-cinnabar);
+}
+
+.journal-card[data-highlighted="true"] {
+  outline: 2px solid var(--j-dai);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px var(--j-dai-soft);
+  transition: box-shadow 220ms ease, outline-color 220ms ease;
+}
+
+/* --- Auto-Tag Topbar Pill & Popover (Time Journal) --- */
+
+.journal-autotag-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.journal-status-pill.is-autotag-active .journal-status-dot {
+  background: var(--j-pine);
+}
+
+.journal-status-pill.is-autotag-running .journal-status-dot {
+  background: var(--j-dai);
+  animation: journal-autotag-pulse 1.1s ease-in-out infinite;
+}
+
+.journal-status-pill.is-autotag-warn .journal-status-dot {
+  background: var(--j-amber);
+}
+
+.journal-status-pill.is-autotag-disabled .journal-status-dot {
+  background: var(--j-line-strong);
+}
+
+@keyframes journal-autotag-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.journal-autotag-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 310px;
+  padding: 14px 16px;
+  border-radius: 13px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-surface);
+  box-shadow: 0 12px 32px rgba(35, 34, 31, 0.16);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+
+.journal-autotag-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--j-ink-1);
+}
+
+.journal-autotag-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--j-ink-2);
+}
+
+.journal-autotag-select,
+.journal-autotag-input {
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-canvas);
+  color: var(--j-ink-1);
+  font-family: var(--j-font-sans);
+  font-size: 12px;
+}
+
+.journal-autotag-input {
+  font-family: var(--j-font-mono);
+  font-size: 11.5px;
+}
+
+.journal-autotag-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--j-ink-3);
+}
+
+.journal-autotag-meta {
+  font-size: 11.5px;
+  color: var(--j-ink-2);
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: var(--j-canvas);
+  border: 1px solid var(--j-line);
+}
+
+.journal-autotag-endpoint {
+  font-family: var(--j-font-mono);
+  font-size: 10.5px;
+  color: var(--j-ink-3);
+  word-break: break-all;
+}
+
+.journal-autotag-run-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--j-dai);
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+  font-family: var(--j-font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.journal-autotag-run-btn:hover:not(:disabled) {
+  background: var(--j-dai);
+  color: var(--j-surface);
+}
+
+.journal-autotag-run-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

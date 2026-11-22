@@ -61,8 +61,9 @@ export function JournalComposer({
 }: JournalComposerProps) {
   const { t } = useI18n()
   const [body, setBody] = useState('')
-  const [category, setCategory] = useState<JournalCategory>('学习')
+  const [category, setCategory] = useState<JournalCategory>('未归类')
   const [kind, setKind] = useState<ComposerKindOption>('note')
+  const [isPrivate, setIsPrivate] = useState(false)
   const [images, setImages] = useState<PendingComposerImage[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -256,6 +257,7 @@ export function JournalComposer({
       projectRefs,
       source: 'local',
       provenance: 'human',
+      private: isPrivate || undefined,
       images: images.map(({ fileName, mimeType, dataUrl, caption }) => ({
         fileName,
         mimeType,
@@ -267,6 +269,8 @@ export function JournalComposer({
     setSubmitting(false)
     if (ok) {
       setBody('')
+      setCategory('未归类')
+      setIsPrivate(false)
       setImages([])
       setOpenMenu(null)
     }
@@ -489,6 +493,17 @@ export function JournalComposer({
                 </div>
               ) : null}
             </div>
+
+            <button
+              type="button"
+              className={`journal-tool-pill${isPrivate ? ' is-private-active' : ''}`}
+              aria-pressed={isPrivate}
+              title={t('journal.privateToggleTitle')}
+              onClick={() => setIsPrivate((prev) => !prev)}
+            >
+              <IconInline name="shield" />
+              <span>{t('journal.privateBadge')}</span>
+            </button>
           </div>
 
           <div className="journal-composer-right">

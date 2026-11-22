@@ -46,6 +46,7 @@ export class JournalStore {
   private watchDebounceTimer: NodeJS.Timeout | null = null
   private pendingWatchDates = new Set<string>()
   private pendingWatchPaths = new Set<string>()
+  private writeChain: Promise<unknown> = Promise.resolve()
 
   constructor(options: JournalStoreOptions = {}) {
     this.deskRoot = options.deskRoot || process.env.SENTINEL_DESK_ROOT || DEFAULT_SENTINEL_DESK_ROOT
@@ -100,6 +101,13 @@ export class JournalStore {
     date: string,
     newEntries: JournalEntry[]
   ): Promise<{ imported: number; skipped: number }> {
+    return this.enqueue(() => this.importLegacyDayEntriesImpl(date, newEntries))
+  }
+
+  private async importLegacyDayEntriesImpl(
+    date: string,
+    newEntries: JournalEntry[]
+  ): Promise<{ imported: number; skipped: number }> {
     const dayResult = await this.getDay(date)
     const existing = dayResult.ok ? dayResult.entries : []
     const existingExtIds = new Set(existing.map((e) => e.externalId).filter(Boolean))
@@ -126,8 +134,21 @@ export class JournalStore {
     return { imported: toAdd.length, skipped }
   }
 
-  private emitChange(event: JournalChangedEvent): void {
-    if (this.onChange) {
+  /**
+   * Serializes every read-modify-write against the daily Markdown files.
+   * Without it a background auto-tagger write can overwrite a user edit made
+   * concurrently (both rebuild the whole day file from their own snapshot).
+   */
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.writeChain.then(operation, operation)
+    this.writeChain = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  private emitChange(event: JournalChangedEvent): void {    if (this.onChange) {
       try {
         this.onChange(event)
       } catch (err) {
@@ -180,6 +201,10 @@ export class JournalStore {
   }
 
   async createEntry(input: CreateJournalEntryInput): Promise<CreateJournalEntryResult> {
+    return this.enqueue(() => this.createEntryImpl(input))
+  }
+
+  private async createEntryImpl(input: CreateJournalEntryInput): Promise<CreateJournalEntryResult> {
     try {
       const parsedTs = input.ts ? new Date(input.ts) : null
       const baseDate = parsedTs && !Number.isNaN(parsedTs.getTime()) ? parsedTs : new Date()
@@ -261,6 +286,7 @@ export class JournalStore {
         relatedNote: input.relatedNote ?? null,
         momentTitle: input.momentTitle ?? null,
         momentSubtitle: input.momentSubtitle ?? null,
+        ...(input.private === true ? { private: true } : {}),
       }
 
       existingEntries.push(newEntry)
@@ -294,6 +320,14 @@ export class JournalStore {
     entryId: string,
     patch: UpdateJournalEntryInput
   ): Promise<UpdateJournalEntryResult> {
+    return this.enqueue(() => this.updateEntryImpl(date, entryId, patch))
+  }
+
+  private async updateEntryImpl(
+    date: string,
+    entryId: string,
+    patch: UpdateJournalEntryInput
+  ): Promise<UpdateJournalEntryResult> {
     try {
       const dayResult = await this.getDay(date)
       if (!dayResult.ok) {
@@ -317,6 +351,8 @@ export class JournalStore {
         relatedNote: patch.relatedNote !== undefined ? patch.relatedNote : existing.relatedNote,
         momentTitle: patch.momentTitle !== undefined ? patch.momentTitle : existing.momentTitle,
         momentSubtitle: patch.momentSubtitle !== undefined ? patch.momentSubtitle : existing.momentSubtitle,
+        private: patch.private !== undefined ? patch.private : existing.private,
+        autoApplied: patch.autoApplied !== undefined ? patch.autoApplied : existing.autoApplied,
       }
 
       entries[targetIndex] = updated
@@ -343,6 +379,10 @@ export class JournalStore {
   }
 
   async deleteEntry(date: string, entryId: string): Promise<DeleteJournalEntryResult> {
+    return this.enqueue(() => this.deleteEntryImpl(date, entryId))
+  }
+
+  private async deleteEntryImpl(date: string, entryId: string): Promise<DeleteJournalEntryResult> {
     try {
       const dayResult = await this.getDay(date)
       if (!dayResult.ok) {

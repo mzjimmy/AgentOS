@@ -629,8 +629,25 @@ export function extractJournalTokens(
   }
 
   const projectByLowerName = new Map(knownProjects.map((project) => [project.name.toLowerCase(), project.name]))
+  // First match known workspace project names directly (supports spaces / CJK brackets like `【Mitchi Sentinel】AgentOS`)
+  const sortedKnownProjects = [...knownProjects]
+    .filter((p) => p.name.trim().length > 0)
+    .sort((a, b) => b.name.length - a.name.length)
+  let remainingForMentions = withoutUrls
+  for (const project of sortedKnownProjects) {
+    const escaped = project.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const knownRe = new RegExp(`(^|[\\s，。！？、；：(\\[])@${escaped}(?=$|[\\s，。！？、；：)\\]])`, 'gi')
+    if (knownRe.test(remainingForMentions)) {
+      if (!seenProjects.has(project.name)) {
+        seenProjects.add(project.name)
+        projectRefs.push(project.name)
+      }
+      remainingForMentions = remainingForMentions.replace(knownRe, '$1 ')
+    }
+  }
+
   const mentionRegex = /(?:^|[\s，。！？、；：(\[])@([\p{L}\p{N}_.-]{1,64})/gu
-  for (const match of withoutUrls.matchAll(mentionRegex)) {
+  for (const match of remainingForMentions.matchAll(mentionRegex)) {
     const raw = match[1]?.trim()
     if (!raw) continue
     const canonical = projectByLowerName.get(raw.toLowerCase()) ?? raw
@@ -737,5 +754,67 @@ export function toJournalDiscussTarget(option: JournalDiscussTargetOption): Jour
   return option.kind === 'desk'
     ? { kind: 'desk', deskRoot: option.deskRoot }
     : { kind: 'project', projectId: option.projectId }
+}
+
+export type JournalBodyCollapsePolicy = {
+  collapsible: boolean
+  collapsedLines: number
+}
+
+export const NOTE_COLLAPSE_CHAR_THRESHOLD = 180
+export const NOTE_COLLAPSE_LINE_THRESHOLD = 6
+export const NOTE_COLLAPSED_LINES = 5
+
+export const THOUGHT_COLLAPSE_CHAR_THRESHOLD = 420
+export const THOUGHT_COLLAPSE_LINE_THRESHOLD = 12
+export const THOUGHT_COLLAPSED_LINES = 10
+
+/**
+ * Determines whether a day-view card body should start collapsed with a bottom expand/collapse toggle:
+ * - Boxed `note` cards collapse once past the standard long-text threshold (180 chars or 6 lines).
+ * - Borderless `thought` cards use a relaxed threshold (420 chars or 12 lines) so only extra-long thoughts fold.
+ * - All other card species and compact-short cards stay expanded.
+ */
+export function resolveJournalBodyCollapsePolicy(
+  entry: Pick<JournalEntry, 'kind' | 'body' | 'images'>,
+  presentation: JournalCardPresentation = 'default',
+): JournalBodyCollapsePolicy {
+  if (presentation === 'compact-thought') {
+    return { collapsible: false, collapsedLines: 0 }
+  }
+  const species = resolveEffectiveCardKind(entry)
+  const trimmed = entry.body.trim()
+  if (!trimmed) {
+    return { collapsible: false, collapsedLines: 0 }
+  }
+  const textLen = trimmed.length
+  const lineCount = countTextLines(trimmed)
+
+  if (species === 'note') {
+    if (textLen > NOTE_COLLAPSE_CHAR_THRESHOLD || lineCount > NOTE_COLLAPSE_LINE_THRESHOLD) {
+      return { collapsible: true, collapsedLines: NOTE_COLLAPSED_LINES }
+    }
+    return { collapsible: false, collapsedLines: 0 }
+  }
+
+  if (species === 'thought') {
+    if (textLen > THOUGHT_COLLAPSE_CHAR_THRESHOLD || lineCount > THOUGHT_COLLAPSE_LINE_THRESHOLD) {
+      return { collapsible: true, collapsedLines: THOUGHT_COLLAPSED_LINES }
+    }
+    return { collapsible: false, collapsedLines: 0 }
+  }
+
+  return { collapsible: false, collapsedLines: 0 }
+}
+
+export type JournalPhotoOrientation = 'portrait' | 'landscape' | 'square'
+
+export function resolvePhotoOrientation(width?: number, height?: number): JournalPhotoOrientation {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return 'landscape'
+  }
+  if (height > width) return 'portrait'
+  if (width > height) return 'landscape'
+  return 'square'
 }
 

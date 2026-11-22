@@ -160,14 +160,15 @@ test('journal-ui-helpers extracts #tags and @projects without duplicating or cap
   const projects = [
     { id: 'p1', name: 'PFMEA' },
     { id: 'p2', name: 'AgentOS' },
+    { id: 'p3', name: '【Mitchi Sentinel】AgentOS' },
   ]
   const parsed = helpers.extractJournalTokens(
-    '今天复盘 @PFMEA 和 @AgentOS，参考 https://example.com/#anchor #agent_os #需求反馈 #PFMEA #agent_os',
+    '今天复盘 @PFMEA 和 @AgentOS，以及 @【Mitchi Sentinel】AgentOS 参考 https://example.com/#anchor #agent_os #需求反馈 #PFMEA #agent_os',
     projects,
   )
 
   assert.deepEqual(parsed.tags, ['agent_os', '需求反馈', 'PFMEA'])
-  assert.deepEqual(parsed.projectRefs, ['PFMEA', 'AgentOS'])
+  assert.deepEqual(parsed.projectRefs, ['【Mitchi Sentinel】AgentOS', 'AgentOS', 'PFMEA'])
 })
 
 test('journal-ui-helpers cycles categories and provides stable category slugs', () => {
@@ -534,4 +535,89 @@ test('sliceWeekDayEntries caps visible week-column items to 12 and reports overf
     visible: twelve,
     overflowCount: 3,
   })
+})
+
+test('resolveJournalBodyCollapsePolicy collapses long note cards and uses a relaxed threshold for thought cards', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  const makeEntry = (overrides) => ({
+    id: 'je_collapse',
+    date: '2026-11-21',
+    time: '20:12',
+    ts: '2026-11-21T20:12:00.000+08:00',
+    kind: 'note',
+    body: '',
+    category: '工程',
+    tags: [],
+    projectRefs: [],
+    source: 'local',
+    provenance: 'human',
+    images: [],
+    ...overrides,
+  })
+
+  // Short note: not collapsible
+  assert.deepEqual(
+    helpers.resolveJournalBodyCollapsePolicy(makeEntry({ body: '简短笔记，不需要收起。' })),
+    { collapsible: false, collapsedLines: 0 },
+  )
+
+  // Long note (> 180 chars): collapsible to 5 lines
+  assert.deepEqual(
+    helpers.resolveJournalBodyCollapsePolicy(makeEntry({ body: '这是一段很长的方框笔记内容。'.repeat(16) })),
+    { collapsible: true, collapsedLines: 5 },
+  )
+
+  // Multi-line note (> 6 lines): collapsible to 5 lines
+  assert.deepEqual(
+    helpers.resolveJournalBodyCollapsePolicy(
+      makeEntry({ body: '1\n2\n3\n4\n5\n6\n7' }),
+    ),
+    { collapsible: true, collapsedLines: 5 },
+  )
+
+  // Moderately long thought (~240 chars, would collapse if it were a note): NOT collapsible (relaxed threshold)
+  assert.deepEqual(
+    helpers.resolveJournalBodyCollapsePolicy(
+      makeEntry({ kind: 'thought', body: '这是一段中等长度的随想记录，应该完整展开不被过早折叠。'.repeat(10) }),
+    ),
+    { collapsible: false, collapsedLines: 0 },
+  )
+
+  // Extra-long thought (> 420 chars): collapsible with relaxed 10-line clamp
+  assert.deepEqual(
+    helpers.resolveJournalBodyCollapsePolicy(
+      makeEntry({ kind: 'thought', body: '这是一段非常非常长的随想深度复盘文本。'.repeat(28) }),
+    ),
+    { collapsible: true, collapsedLines: 10 },
+  )
+
+  // Extra-long multi-line thought (> 12 lines): collapsible with 10-line clamp
+  assert.deepEqual(
+    helpers.resolveJournalBodyCollapsePolicy(
+      makeEntry({ kind: 'thought', body: Array.from({ length: 13 }, (_, i) => `行${i + 1}`).join('\n') }),
+    ),
+    { collapsible: true, collapsedLines: 10 },
+  )
+
+  // Non-note/thought species (ai, photo, moment, judgment) and compact-thought presentation: never collapsible
+  assert.equal(
+    helpers.resolveJournalBodyCollapsePolicy(makeEntry({ kind: 'ai', body: '总结。'.repeat(150) })).collapsible,
+    false,
+  )
+  assert.equal(
+    helpers.resolveJournalBodyCollapsePolicy(
+      makeEntry({ kind: 'note', body: '这是一段很长的方框笔记内容。'.repeat(16) }),
+      'compact-thought',
+    ).collapsible,
+    false,
+  )
+})
+
+test('resolvePhotoOrientation classifies portrait, landscape, and square dimensions', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+  assert.equal(helpers.resolvePhotoOrientation(900, 1600), 'portrait')
+  assert.equal(helpers.resolvePhotoOrientation(1600, 900), 'landscape')
+  assert.equal(helpers.resolvePhotoOrientation(1000, 1000), 'square')
+  assert.equal(helpers.resolvePhotoOrientation(0, 100), 'landscape')
 })

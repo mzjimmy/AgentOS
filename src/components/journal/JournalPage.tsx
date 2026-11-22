@@ -21,12 +21,14 @@ import {
   type UpdateJournalEntryInput,
 } from '../../journal-contract'
 import type { WorkspaceProject } from '../types'
+import type { JournalAutoTagEngine, JournalAutoTagStatus } from '../../journal-auto-tag-contract'
 import { JournalCalendarPopover } from './JournalCalendarPopover'
 import { JournalCard } from './JournalCard'
 import { JournalComposer } from './JournalComposer'
 import { JournalFeishuModal } from './JournalFeishuModal'
 import { JournalLightbox, type LightboxImageItem } from './JournalLightbox'
 import { JournalWeekView } from './JournalWeekView'
+import { useShanghaiToday } from '../desk/useShanghaiToday'
 import {
   formatCalendarDayNumber,
   formatJournalHeroDate,
@@ -37,8 +39,16 @@ import {
   getWeekDates,
   planJournalDayLayout,
   shiftDateString,
-  toLocalDateString,
 } from './journal-ui-helpers'
+
+function parseJournalAnchorHash(): { date?: string; entryId?: string } {
+  if (typeof window === 'undefined') return {}
+  const parts = window.location.hash.replace(/^#\/?/, '').split('/').filter(Boolean)
+  if (parts[0] !== 'journal') return {}
+  const date = parts[1] && /^\d{4}-\d{2}-\d{2}$/.test(parts[1]) ? parts[1] : undefined
+  const entryId = parts[2] ? decodeURIComponent(parts[2]) : undefined
+  return { date, entryId }
+}
 
 type ViewMode = 'day' | 'week'
 
@@ -67,8 +77,10 @@ export function JournalPage({
   onDiscussInChat,
 }: JournalPageProps) {
   const { locale, t } = useI18n()
-  const todayDate = useMemo(() => toLocalDateString(), [])
-  const [selectedDate, setSelectedDate] = useState<string>(todayDate)
+  const todayDate = useShanghaiToday()
+  const initialAnchor = useMemo(() => parseJournalAnchorHash(), [])
+  const [selectedDate, setSelectedDate] = useState<string>(initialAnchor.date ?? todayDate)
+  const [highlightedEntryId, setHighlightedEntryId] = useState<string | null>(initialAnchor.entryId ?? null)
   const [viewMode, setViewMode] = useState<ViewMode>('day')
   const [dayEntries, setDayEntries] = useState<JournalEntry[]>([])
   const [weekDays, setWeekDays] = useState<JournalWeekDay[]>([])
@@ -83,6 +95,12 @@ export function JournalPage({
   const [saveNotice, setSaveNotice] = useState<'ready' | 'saved'>('ready')
   const [feishuStatus, setFeishuStatus] = useState<FeishuBridgeStatus | null>(null)
   const [feishuModalOpen, setFeishuModalOpen] = useState(false)
+  const [autoTagStatus, setAutoTagStatus] = useState<JournalAutoTagStatus | null>(null)
+  const [autoTagOpen, setAutoTagOpen] = useState(false)
+  const [autoTagRunning, setAutoTagRunning] = useState(false)
+  const [autoTagLocalUrlDraft, setAutoTagLocalUrlDraft] = useState('')
+  const [autoTagLocalModelDraft, setAutoTagLocalModelDraft] = useState('')
+  const autoTagAnchorRef = useRef<HTMLDivElement | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [allDaySummaries, setAllDaySummaries] = useState<JournalDaySummary[]>([])
   const [calendarLoading, setCalendarLoading] = useState(false)
@@ -214,6 +232,38 @@ export function JournalPage({
   }, [refreshJournalData, selectedDate])
 
   useEffect(() => {
+    const syncFromHash = () => {
+      const anchor = parseJournalAnchorHash()
+      if (anchor.date) {
+        setSelectedDate(anchor.date)
+        setViewMode('day')
+      }
+      if (anchor.entryId) {
+        setHighlightedEntryId(anchor.entryId)
+      }
+    }
+    window.addEventListener('hashchange', syncFromHash)
+    return () => window.removeEventListener('hashchange', syncFromHash)
+  }, [])
+
+  useEffect(() => {
+    if (!highlightedEntryId || loading || viewMode !== 'day') return
+    const target = dayEntries.find((e) => e.id === highlightedEntryId)
+    if (!target) return
+    const frame = window.requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-entry-id="${CSS.escape(highlightedEntryId)}"]`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+    const clearTimer = window.setTimeout(() => {
+      setHighlightedEntryId((cur) => (cur === highlightedEntryId ? null : cur))
+    }, 3200)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(clearTimer)
+    }
+  }, [dayEntries, highlightedEntryId, loading, viewMode])
+
+  useEffect(() => {
     if (!calendarOpen) return
     const api = getJournalDesktopApi()
     if (!api?.listJournalDays) return
@@ -234,6 +284,82 @@ export function JournalPage({
       cancelled = true
     }
   }, [calendarOpen])
+
+  useEffect(() => {
+    const api = window.desktop
+    if (!api?.getJournalAutoTagStatus) return
+    let cancelled = false
+    const pullStatus = () => {
+      void api
+        .getJournalAutoTagStatus?.()
+        .then((status) => {
+          if (!cancelled && status) setAutoTagStatus(status)
+        })
+        .catch(() => undefined)
+    }
+    pullStatus()
+    const unsub = api.onJournalAutoTagChanged?.((event) => {
+      pullStatus()
+      if (event.reason === 'ran' && event.dates.includes(selectedDateRef.current)) {
+        void refreshJournalData(selectedDateRef.current)
+      }
+    })
+    return () => {
+      cancelled = true
+      unsub?.()
+    }
+  }, [refreshJournalData])
+
+  useEffect(() => {
+    if (!autoTagOpen) return
+    const onMouseDown = (event: MouseEvent) => {
+      if (autoTagAnchorRef.current?.contains(event.target as Node)) return
+      setAutoTagOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [autoTagOpen])
+
+  useEffect(() => {
+    if (!autoTagStatus?.config) return
+    setAutoTagLocalUrlDraft(autoTagStatus.config.localBaseUrl || '')
+    setAutoTagLocalModelDraft(autoTagStatus.config.localModel || '')
+  }, [autoTagStatus?.config?.localBaseUrl, autoTagStatus?.config?.localModel])
+
+  const handleToggleAutoTagEnabled = async () => {
+    const api = window.desktop
+    if (!api?.saveJournalAutoTagConfig || !autoTagStatus) return
+    const next = await api.saveJournalAutoTagConfig({ enabled: !autoTagStatus.config.enabled })
+    setAutoTagStatus((prev) => (prev ? { ...prev, config: next } : prev))
+  }
+
+  const handleChangeAutoTagEngine = async (engine: JournalAutoTagEngine) => {
+    const api = window.desktop
+    if (!api?.saveJournalAutoTagConfig) return
+    const next = await api.saveJournalAutoTagConfig({ engine })
+    setAutoTagStatus((prev) => (prev ? { ...prev, config: next } : prev))
+  }
+
+  const handleSaveAutoTagLocalConfig = async (patch: { localBaseUrl?: string; localModel?: string }) => {
+    const api = window.desktop
+    if (!api?.saveJournalAutoTagConfig) return
+    const next = await api.saveJournalAutoTagConfig(patch)
+    setAutoTagStatus((prev) => (prev ? { ...prev, config: next } : prev))
+  }
+
+  const handleRunAutoTagNow = async () => {
+    const api = window.desktop
+    if (!api?.runJournalAutoTag || autoTagRunning) return
+    setAutoTagRunning(true)
+    try {
+      await api.runJournalAutoTag({ date: selectedDate, force: true })
+      const fresh = await api.getJournalAutoTagStatus?.().catch(() => null)
+      if (fresh) setAutoTagStatus(fresh)
+      await refreshJournalData(selectedDate)
+    } finally {
+      setAutoTagRunning(false)
+    }
+  }
 
   useEffect(() => {
     return () => {
@@ -404,7 +530,7 @@ export function JournalPage({
 
   return (
     <section
-      className={`journal-page${pageDragOver ? ' is-drag-over' : ''}`}
+      className={`journal-page desk-surface${pageDragOver ? ' is-drag-over' : ''}`}
       aria-label={t('journal.pageTitle')}
       onDragOver={(event) => {
         if (event.dataTransfer?.types.includes('Files')) {
@@ -613,6 +739,137 @@ export function JournalPage({
                 </span>
               ) : null}
 
+              <div className="journal-autotag-anchor" ref={autoTagAnchorRef}>
+                <button
+                  type="button"
+                  className={`journal-status-pill is-clickable is-autotag-${
+                    autoTagRunning
+                      ? 'running'
+                      : !autoTagStatus?.config.enabled
+                        ? 'disabled'
+                        : autoTagStatus?.lastRun.status === 'local_unreachable' ||
+                            autoTagStatus?.lastRun.status === 'failed'
+                          ? 'warn'
+                          : 'active'
+                  }`}
+                  title={t('journal.autoTagPillTitle')}
+                  aria-expanded={autoTagOpen}
+                  onClick={() => setAutoTagOpen((open) => !open)}
+                >
+                  <span className="journal-status-dot" aria-hidden="true" />
+                  <span>
+                    {autoTagRunning
+                      ? t('journal.autoTagPillRunning')
+                      : !autoTagStatus?.config.enabled
+                        ? t('journal.autoTagPillDisabled')
+                        : autoTagStatus.config.engine === 'jev'
+                          ? t('journal.autoTagPillJev')
+                          : autoTagStatus.config.engine === 'auto'
+                            ? t('journal.autoTagPillAuto')
+                            : t('journal.autoTagPillLocal')}
+                  </span>
+                </button>
+
+                {autoTagOpen && autoTagStatus ? (
+                  <div className="journal-autotag-popover" role="dialog">
+                    <label className="journal-autotag-row">
+                      <span>{t('journal.autoTagPopoverTitle')}</span>
+                      <input
+                        type="checkbox"
+                        checked={autoTagStatus.config.enabled}
+                        onChange={() => void handleToggleAutoTagEnabled()}
+                      />
+                    </label>
+
+                    <label className="journal-autotag-field">
+                      <span>{t('journal.autoTagEngineLabel')}</span>
+                      <select
+                        className="journal-autotag-select"
+                        value={autoTagStatus.config.engine || 'local'}
+                        onChange={(e) =>
+                          void handleChangeAutoTagEngine(e.target.value as JournalAutoTagEngine)
+                        }
+                      >
+                        <option value="local">{t('journal.autoTagEngineLocal')}</option>
+                        <option value="jev">{t('journal.autoTagEngineJev')}</option>
+                        <option value="auto">{t('journal.autoTagEngineAuto')}</option>
+                      </select>
+                    </label>
+
+                    {(autoTagStatus.config.engine || 'local') === 'local' ||
+                    autoTagStatus.config.engine === 'auto' ? (
+                      <>
+                        <label className="journal-autotag-field">
+                          <span>{t('journal.autoTagLocalBaseUrlLabel')}</span>
+                          <input
+                            type="text"
+                            className="journal-autotag-input"
+                            value={autoTagLocalUrlDraft}
+                            onChange={(e) => setAutoTagLocalUrlDraft(e.target.value)}
+                            onBlur={() =>
+                              void handleSaveAutoTagLocalConfig({ localBaseUrl: autoTagLocalUrlDraft })
+                            }
+                          />
+                        </label>
+                        <label className="journal-autotag-field">
+                          <span>{t('journal.autoTagLocalModelLabel')}</span>
+                          <input
+                            type="text"
+                            className="journal-autotag-input"
+                            value={autoTagLocalModelDraft}
+                            onChange={(e) => setAutoTagLocalModelDraft(e.target.value)}
+                            onBlur={() =>
+                              void handleSaveAutoTagLocalConfig({ localModel: autoTagLocalModelDraft })
+                            }
+                          />
+                        </label>
+                      </>
+                    ) : null}
+
+                    <p className="journal-autotag-hint">
+                      {autoTagStatus.config.engine === 'local'
+                        ? t('journal.autoTagLocalOnly')
+                        : t('journal.autoTagJevHint')}
+                    </p>
+
+                    <div className="journal-autotag-meta">
+                      {(() => {
+                        const run = autoTagStatus.lastRunByDate[selectedDate] ?? autoTagStatus.lastRun
+                        if (run.status === 'idle') return t('journal.autoTagStatusIdle')
+                        if (run.status === 'disabled') return t('journal.autoTagStatusDisabled')
+                        if (run.status === 'local_unreachable') return t('journal.autoTagStatusUnreachable')
+                        if (run.status === 'failed') {
+                          return t('journal.autoTagStatusFailed', { message: run.message || 'error' })
+                        }
+                        return t('journal.autoTagStatusLastRun', {
+                          scanned: run.scanned,
+                          decided: run.decided,
+                          changed: run.changed,
+                        })
+                      })()}
+                    </div>
+
+                    {autoTagStatus.lastRun.endpoint ? (
+                      <div className="journal-autotag-endpoint">
+                        {t('journal.autoTagEndpoint', { endpoint: autoTagStatus.lastRun.endpoint })}
+                      </div>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      className="journal-autotag-run-btn"
+                      disabled={autoTagRunning || !autoTagStatus.config.enabled}
+                      onClick={() => void handleRunAutoTagNow()}
+                    >
+                      <IconInline name="refresh" />
+                      <span>
+                        {autoTagRunning ? t('journal.autoTagPillRunning') : t('journal.autoTagRunDayNow')}
+                      </span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
               <button
                 type="button"
                 className={`journal-status-pill is-clickable is-feishu-${feishuStatus?.state ?? 'disabled'}`}
@@ -681,6 +938,7 @@ export function JournalPage({
                   onUpdateEntry={handleUpdateEntry}
                   onDeleteEntry={handleDeleteEntry}
                   onDiscussInChat={onDiscussInChat}
+                  highlighted={highlightedEntryId === item.entry.id}
                   onFilterByTag={(tag) =>
                     setActiveTagFilter((cur) => (cur === tag ? null : tag))
                   }

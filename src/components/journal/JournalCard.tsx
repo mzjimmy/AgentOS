@@ -21,8 +21,11 @@ import {
   getJournalCategorySlug,
   getNextJournalCategory,
   resolveEffectiveCardKind,
+  resolveJournalBodyCollapsePolicy,
+  resolvePhotoOrientation,
   toJournalDiscussTarget,
   type JournalDayLayoutItem,
+  type JournalPhotoOrientation,
 } from './journal-ui-helpers'
 
 type JournalCardLayout = Pick<
@@ -42,6 +45,7 @@ type JournalCardProps = {
   onDeleteEntry: (entryId: string) => Promise<boolean>
   onDiscussInChat?: (entry: JournalEntry, target: JournalDiscussTarget) => void | Promise<void>
   onFilterByTag?: (tag: string) => void
+  highlighted?: boolean
 }
 
 export function JournalCard({
@@ -56,6 +60,7 @@ export function JournalCard({
   onDeleteEntry,
   onDiscussInChat,
   onFilterByTag,
+  highlighted = false,
 }: JournalCardProps) {
   const { t } = useI18n()
   const [editing, setEditing] = useState(false)
@@ -66,7 +71,13 @@ export function JournalCard({
   const [copied, setCopied] = useState(false)
   const [discussMenuOpen, setDiscussMenuOpen] = useState(false)
   const [discussing, setDiscussing] = useState(false)
+  const [bodyExpanded, setBodyExpanded] = useState(false)
+  const [imgOrientations, setImgOrientations] = useState<Record<string, JournalPhotoOrientation>>({})
   const discussAnchorRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    setBodyExpanded(false)
+  }, [entry.id])
 
   const discussTargets = useMemo(
     () => buildJournalDiscussTargets(entry, projects, deskRoot),
@@ -104,6 +115,11 @@ export function JournalCard({
   const species = resolveEffectiveCardKind(entry)
   const colSpan = layout?.colSpan ?? classifyJournalCardSpan(entry, index)
   const presentation = layout?.presentation ?? 'default'
+  const collapsePolicy = useMemo(
+    () => resolveJournalBodyCollapsePolicy(entry, presentation),
+    [entry, presentation],
+  )
+  const isBodyClamped = collapsePolicy.collapsible && !bodyExpanded
   const categorySlug = getJournalCategorySlug(entry.category)
   const layoutStyle: CSSProperties | undefined = layout
     ? ({
@@ -115,6 +131,8 @@ export function JournalCard({
     : undefined
   const layoutDataProps = {
     'data-entry-id': entry.id,
+    'data-private': entry.private ? 'true' : undefined,
+    'data-highlighted': highlighted ? 'true' : undefined,
     'data-layout-group': layout?.groupKind,
     'data-layout-placed': layout ? 'true' : undefined,
     'data-layout-row-span': layout && layout.rowSpan > 1 ? String(layout.rowSpan) : undefined,
@@ -156,6 +174,10 @@ export function JournalCard({
   const handleCycleCategory = async () => {
     const nextCategory = getNextJournalCategory(entry.category)
     await onUpdateEntry(entry.id, { category: nextCategory })
+  }
+
+  const handleTogglePrivate = async () => {
+    await onUpdateEntry(entry.id, { private: !entry.private })
   }
 
   const handleCopy = async () => {
@@ -219,6 +241,16 @@ export function JournalCard({
           ) : null}
         </div>
       ) : null}
+      <button
+        type="button"
+        className={`journal-card-action-btn${entry.private ? ' is-private-active' : ''}`}
+        title={entry.private ? t('journal.unmarkPrivate') : t('journal.markPrivate')}
+        aria-label={entry.private ? t('journal.unmarkPrivate') : t('journal.markPrivate')}
+        aria-pressed={Boolean(entry.private)}
+        onClick={() => void handleTogglePrivate()}
+      >
+        <IconInline name="shield" />
+      </button>
       <button
         type="button"
         className="journal-card-action-btn"
@@ -286,11 +318,14 @@ export function JournalCard({
         {visibleImages.map((img, imgIdx) => {
           const src = imageCache[img.relativePath]
           const showOverflow = imgIdx === 3 && overflowCount > 0
+          const orientation =
+            imgOrientations[img.relativePath] ?? resolvePhotoOrientation(img.width, img.height)
           return (
             <button
               key={img.relativePath}
               type="button"
               className="journal-photo-tile"
+              data-orientation={orientation}
               aria-label={img.caption || img.fileName}
               onClick={() => onOpenImage(entry, imgIdx)}
             >
@@ -300,6 +335,13 @@ export function JournalCard({
                   alt={img.caption || img.fileName}
                   className="journal-photo-img"
                   loading="lazy"
+                  onLoad={(event) => {
+                    const el = event.currentTarget
+                    const next = resolvePhotoOrientation(el.naturalWidth, el.naturalHeight)
+                    setImgOrientations((prev) =>
+                      prev[img.relativePath] === next ? prev : { ...prev, [img.relativePath]: next },
+                    )
+                  }}
                 />
               ) : (
                 <span className="journal-photo-placeholder">
@@ -315,16 +357,52 @@ export function JournalCard({
   }
 
   const renderMetaFooter = () => {
-    if (entry.tags.length === 0 && entry.projectRefs.length === 0 && !entry.relatedNote) {
+    const autoApplied = entry.autoApplied
+    const hasAutoMark = Boolean(
+      autoApplied &&
+        (autoApplied.private ||
+          autoApplied.category ||
+          (autoApplied.projectRefs?.length ?? 0) > 0 ||
+          (autoApplied.tags?.length ?? 0) > 0),
+    )
+    if (
+      entry.tags.length === 0 &&
+      entry.projectRefs.length === 0 &&
+      !entry.relatedNote &&
+      !entry.private &&
+      !hasAutoMark
+    ) {
       return null
     }
+    const autoRefs = autoApplied?.projectRefs ?? []
     return (
       <div className="journal-card-chips">
+        {entry.private ? (
+          <span
+            className={`journal-private-badge${autoApplied?.private ? ' is-auto' : ''}`}
+            title={
+              autoApplied?.private
+                ? t('journal.autoTagPrivateChipTitle')
+                : t('journal.privateBadgeTitle')
+            }
+          >
+            <IconInline name="shield" />
+            <span>{t('journal.privateBadge')}</span>
+          </span>
+        ) : null}
+        {hasAutoMark ? (
+          <span className="journal-auto-badge" title={t('journal.autoTagChipTitle')}>
+            {t('journal.autoTagChip')}
+          </span>
+        ) : null}
         {entry.relatedNote ? (
           <span className="journal-related-note">↗ {entry.relatedNote}</span>
         ) : null}
         {entry.projectRefs.map((projectName) => (
-          <span key={projectName} className="journal-project-chip">
+          <span
+            key={projectName}
+            className={`journal-project-chip${autoRefs.includes(projectName) ? ' is-auto' : ''}`}
+          >
             @{projectName}
           </span>
         ))}
@@ -401,6 +479,7 @@ export function JournalCard({
       >
         <div className="journal-moment-head">
           <span className="journal-card-time">{entry.time} ♪</span>
+          {renderCategoryPill()}
           {renderHoverActions()}
         </div>
         <div className="journal-moment-title">{entry.momentTitle || entry.body}</div>
@@ -409,6 +488,7 @@ export function JournalCard({
         ) : entry.momentTitle && entry.body ? (
           <div className="journal-moment-subtitle">{entry.body}</div>
         ) : null}
+        {renderMetaFooter()}
       </article>
     )
   }
@@ -503,6 +583,33 @@ export function JournalCard({
     )
   }
 
+  const renderCollapsibleBody = () => (
+    <>
+      <div
+        className={`journal-card-body${isBodyClamped ? ' journal-card-body--clamped' : ''}`}
+        style={
+          isBodyClamped
+            ? ({ '--j-clamp-lines': collapsePolicy.collapsedLines } as CSSProperties)
+            : undefined
+        }
+      >
+        {entry.body}
+      </div>
+      {collapsePolicy.collapsible ? (
+        <div className="journal-card-expand-row">
+          <button
+            type="button"
+            className="journal-card-expand-btn"
+            aria-expanded={bodyExpanded}
+            onClick={() => setBodyExpanded((prev) => !prev)}
+          >
+            {bodyExpanded ? t('journal.collapseBody') : t('journal.expandBody')}
+          </button>
+        </div>
+      ) : null}
+    </>
+  )
+
   if (species === 'thought') {
     return (
       <article
@@ -519,7 +626,7 @@ export function JournalCard({
           </div>
           {renderHoverActions()}
         </div>
-        <div className="journal-card-body">{entry.body}</div>
+        {renderCollapsibleBody()}
         {renderImageGrid()}
         {renderMetaFooter()}
       </article>
@@ -541,7 +648,7 @@ export function JournalCard({
         </div>
         {renderHoverActions()}
       </div>
-      <div className="journal-card-body">{entry.body}</div>
+      {renderCollapsibleBody()}
       {renderImageGrid()}
       {renderMetaFooter()}
     </article>

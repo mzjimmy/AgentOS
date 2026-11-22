@@ -3,14 +3,52 @@
  * Stored at: <deskRoot>/journal/YYYY/MM/YYYY-MM-DD.md
  */
 
+import { createHash } from 'node:crypto'
 import {
   JOURNAL_CATEGORIES,
   JOURNAL_ENTRY_KINDS,
+  type JournalAutoAppliedMeta,
   type JournalCategory,
   type JournalEntry,
   type JournalEntryKind,
   type JournalImageAttachment,
 } from '../../src/journal-contract'
+
+function deterministicFallbackId(date: string, time: string, body: string, index: number): string {
+  const digest = createHash('sha256')
+    .update(`${date}|${time}|${body}|${index}`)
+    .digest('hex')
+    .slice(0, 8)
+  return `je_${date.replace(/-/g, '')}_${time.replace(':', '')}_${digest}`
+}
+
+/**
+ * Defensive reader for the machine-applied metadata blob. Older journal files have
+ * no `autoApplied` key at all, which must round-trip as `undefined`.
+ */
+function normalizeAutoApplied(raw: unknown): JournalAutoAppliedMeta | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const obj = raw as Record<string, unknown>
+  const projectRefs = Array.isArray(obj.projectRefs)
+    ? obj.projectRefs.map((r) => String(r || '').trim()).filter(Boolean)
+    : undefined
+  const privateFlag = obj.private === true
+  const categoryFlag = obj.category === true
+  const tags = Array.isArray(obj.tags)
+    ? obj.tags.map((t) => String(t || '').trim()).filter(Boolean)
+    : undefined
+  const decidedAt = typeof obj.decidedAt === 'string' ? obj.decidedAt : undefined
+  const pipeline = typeof obj.pipeline === 'string' ? obj.pipeline : undefined
+  if (!projectRefs?.length && !privateFlag && !categoryFlag && !tags?.length && !decidedAt && !pipeline) return undefined
+  return {
+    ...(projectRefs?.length ? { projectRefs } : {}),
+    ...(privateFlag ? { private: true } : {}),
+    ...(categoryFlag ? { category: true } : {}),
+    ...(tags?.length ? { tags } : {}),
+    ...(decidedAt ? { decidedAt } : {}),
+    ...(pipeline ? { pipeline } : {}),
+  }
+}
 
 export function serializeDayMarkdown(date: string, entries: JournalEntry[]): string {
   const parts: string[] = [`# ${date}\n`]
@@ -31,6 +69,8 @@ export function serializeDayMarkdown(date: string, entries: JournalEntry[]): str
       relatedNote: entry.relatedNote ?? null,
       momentTitle: entry.momentTitle ?? null,
       momentSubtitle: entry.momentSubtitle ?? null,
+      ...(entry.private === true ? { private: true } : {}),
+      ...(entry.autoApplied ? { autoApplied: entry.autoApplied } : {}),
     }
 
     const comment = `<!-- journal:entry ${JSON.stringify(meta)} -->`
@@ -101,7 +141,8 @@ export function parseDayMarkdown(fileDate: string, content: string): JournalEntr
   }
   const entries: JournalEntry[] = []
 
-  for (const block of rawBlocks) {
+  for (let blockIdx = 0; blockIdx < rawBlocks.length; blockIdx++) {
+    const block = rawBlocks[blockIdx]
     const trimmed = block.trim()
     if (!trimmed) continue
 
@@ -158,8 +199,8 @@ export function parseDayMarkdown(fileDate: string, content: string): JournalEntr
       .trim()
 
     // Determine fields
-    const id = meta?.id || `je_${resolvedDate.replace(/-/g, '')}_${(headerTime || '00:00').replace(':', '')}_${Math.random().toString(36).slice(2, 6)}`
     const time = headerTime || meta?.time || '00:00'
+    const id = meta?.id || deterministicFallbackId(resolvedDate, time, cleanBody, blockIdx)
     const ts = meta?.ts || `${resolvedDate}T${time}:00.000+08:00`
     const kind: JournalEntryKind = meta?.kind && JOURNAL_ENTRY_KINDS.includes(meta.kind) ? meta.kind : 'note'
     const category: JournalCategory = headerCategory || (meta?.category && JOURNAL_CATEGORIES.includes(meta.category) ? meta.category : '未归类')
@@ -172,6 +213,8 @@ export function parseDayMarkdown(fileDate: string, content: string): JournalEntr
     const relatedNote = meta?.relatedNote ?? null
     const momentTitle = meta?.momentTitle ?? null
     const momentSubtitle = meta?.momentSubtitle ?? null
+    const isPrivate = meta?.private === true || meta?.isPrivate === true
+    const autoApplied = normalizeAutoApplied(meta?.autoApplied)
 
     entries.push({
       id,
@@ -190,6 +233,8 @@ export function parseDayMarkdown(fileDate: string, content: string): JournalEntr
       relatedNote,
       momentTitle,
       momentSubtitle,
+      ...(isPrivate ? { private: true } : {}),
+      ...(autoApplied ? { autoApplied } : {}),
     })
   }
 
