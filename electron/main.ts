@@ -3,7 +3,7 @@
  * Electron main entry: window lifecycle, tray menu, IPC bridges, and Claude Agent runner.
  */
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, protocol, safeStorage, session, shell, Tray, WebContentsView } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, safeStorage, session, shell, Tray, WebContentsView } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -40,7 +40,9 @@ import { ProjectChatPresenceRegistry } from './project-chat-presence'
 import { ProjectChatWindowManager } from './project-chat-window-manager'
 import { JournalStore } from './desk/journal-store'
 import { FeishuJournalBridgeService } from './desk/feishu-journal-bridge'
+import { JournalAutoTagService } from './desk/journal-auto-tag-service'
 import { syncLegacySentinelLabJournal } from './desk/legacy-sync'
+import { IntentTodoService } from './desk/intent-todo-service'
 import { ProjectChatViewStateStore } from './project-chat-view-state-store'
 import { RuntimePreviewLayoutStore } from './runtime-preview-layout-store'
 import { AgentOSDeepLinkQueue, parseAgentOSDeepLink } from './agentos-deep-link'
@@ -213,6 +215,10 @@ let runtimeEditCoordinator: RuntimeEditCoordinator | null = null
 let runtimeEditRuntimeBridge: RuntimeEditRuntimeBridge | null = null
 let journalStore: JournalStore | null = null
 let feishuJournalBridge: FeishuJournalBridgeService | null = null
+let intentTodoService: IntentTodoService | null = null
+let journalAutoTagService: JournalAutoTagService | null = null
+let journalAutoTagDebounceTimer: NodeJS.Timeout | null = null
+const journalAutoTagPendingDates = new Set<string>()
 
 function getJournalStore(): JournalStore {
   if (!journalStore) {
@@ -221,10 +227,60 @@ function getJournalStore(): JournalStore {
         if (win && !win.isDestroyed()) {
           win.webContents.send(DESKTOP_EVENT_CHANNELS.onJournalChanged, event)
         }
+        if (event.reason === 'created' || event.reason === 'updated') {
+          scheduleJournalAutoTag(event.dates)
+        }
       },
     })
   }
   return journalStore
+}
+
+function getJournalAutoTagService(): JournalAutoTagService {
+  if (!journalAutoTagService) {
+    journalAutoTagService = new JournalAutoTagService({
+      userDataPath: app.getPath('userData'),
+      journalStore: getJournalStore(),
+      getWorkspaceState: () => {
+        const state = chatWorkspaceStore?.current() ?? chatWorkspaceStore?.read() ?? null
+        return {
+          projects: (state?.projects ?? []).map((project) => ({
+            id: project.id,
+            name: project.name,
+            path: project.path,
+          })),
+        }
+      },
+      onChanged: (event) => {
+        for (const windowItem of BrowserWindow.getAllWindows()) {
+          if (!windowItem.isDestroyed()) {
+            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onJournalAutoTagChanged, event)
+          }
+        }
+      },
+    })
+  }
+  return journalAutoTagService
+}
+
+/**
+ * Debounced auto-tagging trigger: journal writes are batched per affected date so a
+ * burst of edits costs one local run instead of one run per keystroke.
+ */
+function scheduleJournalAutoTag(dates: string[]): void {
+  if (dates.length === 0) return
+  for (const date of dates) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) journalAutoTagPendingDates.add(date)
+  }
+  if (journalAutoTagDebounceTimer) clearTimeout(journalAutoTagDebounceTimer)
+  journalAutoTagDebounceTimer = setTimeout(() => {
+    journalAutoTagDebounceTimer = null
+    const pending = Array.from(journalAutoTagPendingDates)
+    journalAutoTagPendingDates.clear()
+    for (const date of pending) {
+      void getJournalAutoTagService().runAutoTag({ date }).catch(() => undefined)
+    }
+  }, 1_200)
 }
 
 function getFeishuJournalBridge(): FeishuJournalBridgeService {
@@ -240,6 +296,27 @@ function getFeishuJournalBridge(): FeishuJournalBridgeService {
     })
   }
   return feishuJournalBridge
+}
+
+function getIntentTodoService(): IntentTodoService {
+  if (!intentTodoService) {
+    intentTodoService = new IntentTodoService({
+      userDataPath: app.getPath('userData'),
+      journalStore: getJournalStore(),
+      settingsStore: getClaudeAgentSettingsStore(),
+      getWorkspaceState: () => chatWorkspaceStore?.current() ?? chatWorkspaceStore?.read() ?? null,
+      getBroker: () => (PROJECT_CHAT_BROKER_V2_ENABLED ? projectChatBroker : null),
+      isOnline: () => net.isOnline(),
+      onChanged: (event) => {
+        for (const windowItem of BrowserWindow.getAllWindows()) {
+          if (!windowItem.isDestroyed()) {
+            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onIntentTodoChanged, event)
+          }
+        }
+      },
+    })
+  }
+  return intentTodoService
 }
 let projectRuntimePlacementTracker: ProjectRuntimePlacementTracker | null = null
 let localAppTrustStore: LocalAppTrustStore | null = null
@@ -713,7 +790,7 @@ function installProjectChatProductionComposition(): void {
     runExclusive: (operation) => runChatWorkspaceOperation(async () => operation()),
     permissionMode: () => getDesktopPreferencesStore().read().chatPermissionMode ?? 'auto',
     promptOwnerCandidates: (input) => presence.ownerCandidates(input),
-    broadcast: (event) => { broadcaster(event); agentOSExternalTaskService?.observe(event) },
+    broadcast: (event) => { broadcaster(event); agentOSExternalTaskService?.observe(event); intentTodoService?.observeProjectChatEvent(event) },
     runtimeEditCoordinator: runtimeEditCoordinator ?? undefined,
     runtimeEditEligible: (projectId) => readProjectRuntimeDefinition(projectId) !== null,
     onProjectRunStarting: (projectId, projectRoot) => projectRuntimePlacementTracker?.beforeRun(projectId, projectRoot),
@@ -1365,6 +1442,11 @@ async function prepareForAppQuit(): Promise<void> {
       new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
     ])
     feishuJournalBridge?.dispose()
+    intentTodoService?.dispose()
+    if (journalAutoTagDebounceTimer) {
+      clearTimeout(journalAutoTagDebounceTimer)
+      journalAutoTagDebounceTimer = null
+    }
     projectRuntimeHosts.clear()
     tray?.destroy()
     tray = null
@@ -2824,9 +2906,53 @@ if (gotSingleInstanceLock) {
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getFeishuJournalBridgeStatus, () => getFeishuJournalBridge().getStatus())
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveFeishuJournalBridgeConfig, (_event, update: unknown) => getFeishuJournalBridge().updateConfig((update ?? {}) as any))
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.reconnectFeishuJournalBridge, () => getFeishuJournalBridge().reconnect())
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalAutoTagStatus, () => getJournalAutoTagService().getStatus())
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.runJournalAutoTag, (_event, options?: unknown) =>
+      getJournalAutoTagService().runAutoTag((options ?? {}) as { date?: string; force?: boolean }),
+    )
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveJournalAutoTagConfig, (_event, patch: unknown) =>
+      getJournalAutoTagService().saveConfig((patch ?? {}) as any),
+    )
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getIntentTodoOverview, (_event, selectedDate?: unknown) =>
+      getIntentTodoService().getOverview(typeof selectedDate === 'string' ? selectedDate : undefined),
+    )
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.listIntentTodoCalendar, () =>
+      getIntentTodoService().listCalendarDays(),
+    )
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.refreshIntentTodo, (_event, selectedDate?: unknown) =>
+      getIntentTodoService().refreshAnalysis(typeof selectedDate === 'string' ? selectedDate : undefined),
+    )
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.decideIntentTodo, (_event, itemId: unknown, decision: unknown, selectedDate?: unknown) =>
+      getIntentTodoService().decideItem(
+        String(itemId),
+        decision as any,
+        typeof selectedDate === 'string' ? selectedDate : undefined,
+      ),
+    )
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.dispatchIntentTodo, (_event, params: unknown) =>
+      getIntentTodoService().dispatchItem((params ?? {}) as any),
+    )
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getIntentTodoConfig, () =>
+      getIntentTodoService().getConfig(),
+    )
+    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveIntentTodoConfig, (_event, patch: unknown) =>
+      getIntentTodoService().saveConfig((patch ?? {}) as any),
+    )
     createWindow()
     void getFeishuJournalBridge().startIfEnabled().catch(() => undefined)
     initializeAgentOSExternalTasks()
+    getIntentTodoService().start()
+    // Catch up on today's journal a few seconds after boot.
+    setTimeout(() => {
+      void getJournalAutoTagService().runAutoTag().catch(() => undefined)
+    }, 5_000)
+    powerMonitor.on('resume', () => {
+      intentTodoService?.notifySystemResumeOrFocus()
+      void getJournalAutoTagService().runAutoTag().catch(() => undefined)
+    })
+    app.on('browser-window-focus', () => {
+      intentTodoService?.notifySystemResumeOrFocus()
+    })
     ensureTray()
     appUpdaterService.scheduleUpdateChecks()
   })

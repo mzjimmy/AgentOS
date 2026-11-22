@@ -20,6 +20,12 @@ export const PINNED_MODULES: readonly PinnedModuleDefinition[] = [
     icon: 'journal',
     hash: '#journal',
   },
+  {
+    id: 'intent-todo',
+    labelKey: 'sidebar.pinnedIntentTodo',
+    icon: 'checklist',
+    hash: '#intent-todo',
+  },
 ] as const
 
 export function resolvePinnedModuleByViewId(viewId: string): PinnedModuleDefinition | undefined {

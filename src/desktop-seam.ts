@@ -145,6 +145,16 @@ export const DESKTOP_INVOKE_CHANNELS = {
   getFeishuJournalBridgeStatus: 'desktop:journal:feishu:get-status',
   saveFeishuJournalBridgeConfig: 'desktop:journal:feishu:save-config',
   reconnectFeishuJournalBridge: 'desktop:journal:feishu:reconnect',
+  getJournalAutoTagStatus: 'desktop:journal:auto-tag:get-status',
+  runJournalAutoTag: 'desktop:journal:auto-tag:run',
+  saveJournalAutoTagConfig: 'desktop:journal:auto-tag:save-config',
+  getIntentTodoOverview: 'desktop:intent-todo:get-overview',
+  listIntentTodoCalendar: 'desktop:intent-todo:list-calendar',
+  refreshIntentTodo: 'desktop:intent-todo:refresh',
+  decideIntentTodo: 'desktop:intent-todo:decide',
+  dispatchIntentTodo: 'desktop:intent-todo:dispatch',
+  getIntentTodoConfig: 'desktop:intent-todo:get-config',
+  saveIntentTodoConfig: 'desktop:intent-todo:save-config',
 } as const satisfies Record<DesktopInvokeCapability, string>
 
 export const DESKTOP_EVENT_CHANNELS = {
@@ -159,6 +169,8 @@ export const DESKTOP_EVENT_CHANNELS = {
   onRuntimePreviewNavigationState: 'desktop:runtime-preview:navigation-state-changed',
   onJournalChanged: 'desktop:journal-changed',
   onFeishuJournalBridgeStatus: 'desktop:journal:feishu-status-changed',
+  onJournalAutoTagChanged: 'desktop:journal:auto-tag-changed',
+  onIntentTodoChanged: 'desktop:intent-todo-changed',
 } as const satisfies Record<DesktopEventCapability, string>
 
 export const DESKTOP_SEAM_CAPABILITIES = [

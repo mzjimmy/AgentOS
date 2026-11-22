@@ -47,6 +47,22 @@ import type {
   FeishuBridgeStatus,
 } from './journal-contract'
 import type {
+  JournalAutoTagChangedEvent,
+  JournalAutoTagConfig,
+  JournalAutoTagRunResult,
+  JournalAutoTagStatus,
+} from './journal-auto-tag-contract'
+import type {
+  IntentTodoActionResult,
+  IntentTodoCalendarDay,
+  IntentTodoChangedEvent,
+  IntentTodoConfig,
+  IntentTodoDecisionInput,
+  IntentTodoDispatchResult,
+  IntentTodoOverview,
+  IntentTodoRefreshResult,
+} from './intent-todo-contract'
+import type {
   AgentModeFilesResult,
   AgentMcpGlobalSettings,
   AgentMcpGlobalSettingsResult,
@@ -380,6 +396,27 @@ export type DesktopAPI = {
   saveFeishuJournalBridgeConfig?: (update: FeishuBridgeConfigUpdate) => Promise<FeishuBridgeStatus>
   reconnectFeishuJournalBridge?: () => Promise<FeishuBridgeStatus>
   onFeishuJournalBridgeStatus?: (listener: (status: FeishuBridgeStatus) => void) => () => void
+  getJournalAutoTagStatus?: () => Promise<JournalAutoTagStatus>
+  runJournalAutoTag?: (options?: { date?: string; force?: boolean }) => Promise<JournalAutoTagRunResult>
+  saveJournalAutoTagConfig?: (patch: Partial<JournalAutoTagConfig>) => Promise<JournalAutoTagConfig>
+  onJournalAutoTagChanged?: (listener: (event: JournalAutoTagChangedEvent) => void) => () => void
+  getIntentTodoOverview?: (selectedDate?: string) => Promise<IntentTodoOverview>
+  listIntentTodoCalendar?: () => Promise<IntentTodoCalendarDay[]>
+  refreshIntentTodo?: (selectedDate?: string) => Promise<IntentTodoRefreshResult>
+  decideIntentTodo?: (
+    itemId: string,
+    decision: IntentTodoDecisionInput,
+    selectedDate?: string,
+  ) => Promise<IntentTodoActionResult>
+  dispatchIntentTodo?: (params: {
+    itemId: string
+    projectId?: string
+    sandboxedLife?: boolean
+    selectedDate?: string
+  }) => Promise<IntentTodoDispatchResult>
+  getIntentTodoConfig?: () => Promise<IntentTodoConfig>
+  saveIntentTodoConfig?: (patch: Partial<IntentTodoConfig>) => Promise<IntentTodoConfig>
+  onIntentTodoChanged?: (listener: (event: IntentTodoChangedEvent) => void) => () => void
 }
 
 export type {
@@ -399,4 +436,20 @@ export type {
   FeishuBridgeConfigUpdate,
   FeishuBridgeStatus,
 } from './journal-contract'
+export type {
+  JournalAutoTagChangedEvent,
+  JournalAutoTagConfig,
+  JournalAutoTagRunResult,
+  JournalAutoTagStatus,
+} from './journal-auto-tag-contract'
+export type {
+  IntentTodoActionResult,
+  IntentTodoCalendarDay,
+  IntentTodoChangedEvent,
+  IntentTodoConfig,
+  IntentTodoDecisionInput,
+  IntentTodoDispatchResult,
+  IntentTodoOverview,
+  IntentTodoRefreshResult,
+} from './intent-todo-contract'
 

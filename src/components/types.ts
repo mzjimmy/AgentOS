@@ -15,7 +15,7 @@ import type {
 } from '../claude-chat-types'
 
 /** 顶部主导航视图 / Primary shell view id */
-export type AppViewId = 'journal' | 'home' | 'docs' | 'settings'
+export type AppViewId = 'journal' | 'intent-todo' | 'home' | 'docs' | 'settings'
 
 /** Runtime directory trust state / Runtime 目录信任状态 */
 export type RuntimeTrustStatus = 'trusted' | 'revoked'

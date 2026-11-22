@@ -40,6 +40,7 @@ import { ProjectFilePreviewOverlay, type ProjectFilePreviewOverlayState } from '
 // navigation, so it must not sit in the first-paint bundle.
 const SettingsPage = lazy(async () => ({ default: (await import('./setting/SettingsPage')).SettingsPage }))
 const JournalPage = lazy(async () => ({ default: (await import('./journal/JournalPage')).JournalPage }))
+const IntentTodoPage = lazy(async () => ({ default: (await import('./intent-todo/IntentTodoPage')).IntentTodoPage }))
 import type { JournalDiscussTarget, JournalEntry } from '../journal-contract'
 import { useWorkspaceAgentMode } from './useWorkspaceAgentMode'
 import type { AgentModeSettingsResult, HomePluginRunItem } from '../desktop-types'
@@ -156,6 +157,10 @@ type AppShellWorkspaceProps = {
   onShowProjectSkillsInSidebarChange: (enabled: boolean) => void
   onJournalTodayCountChange?: (count: number) => void
   onDiscussJournalEntry?: (entry: JournalEntry, target: JournalDiscussTarget) => void | Promise<void>
+  onIntentTodoPendingCountChange?: (count: number) => void
+  onOpenDispatchedThread?: (projectId: string, threadId: string) => void
+  onNavigateToJournalAnchor?: (date: string, entryId: string) => void
+  onOpenModelSettings?: () => void
 }
 
 /** Shell 主体渲染路由器 / Shell workspace router mounting routed surfaces */
@@ -211,13 +216,17 @@ export function AppShellWorkspace({
   onShowProjectSkillsInSidebarChange,
   onJournalTodayCountChange,
   onDiscussJournalEntry,
+  onIntentTodoPendingCountChange,
+  onOpenDispatchedThread,
+  onNavigateToJournalAnchor,
+  onOpenModelSettings,
 }: AppShellWorkspaceProps) {
   // --- Derived chrome flags (settings hide header; home “surface” vs chat stream) / 派生框架标志（设置页隐藏顶栏；首页表面对话流）---
 
   const { t } = useI18n()
   const runtimeDevelopmentUi = runtimeDevelopmentStatus(t, runtimeDevelopment)
   const isSettingsChromeHidden = activeViewId === 'settings'
-  const isJournalView = activeViewId === 'journal'
+  const isDeskView = activeViewId === 'journal' || activeViewId === 'intent-todo'
   const [sidePanel, setSidePanel] = useState<SidePanelState>(() => ({ open: false, tab: 'files' }))
   const [filePreview, setFilePreview] = useState<ProjectFilePreviewOverlayState | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -558,7 +567,7 @@ export function AppShellWorkspace({
     <div className="app-workspace">
       {isSettingsChromeHidden ? (
         <div className="app-workspace-top-drag draggable" aria-hidden />
-      ) : isJournalView ? null : (
+      ) : isDeskView ? null : (
         <header className="app-workspace-header" role="banner">
           {isRuntimeActive ? <nav className="runtime-preview-navigation no-drag" aria-label={t('runtime.previewNavigation')}>
             <button type="button" className="btn btn-toolbar" data-testid="runtime-preview-back" title={t('sidebar.back')} aria-label={t('sidebar.back')} onClick={() => onNavigateRuntime?.('back')} disabled={!onNavigateRuntime || !runtimeNavigation.canGoBack}>
@@ -679,6 +688,18 @@ export function AppShellWorkspace({
                 projects={projects}
                 onTodayCountChange={onJournalTodayCountChange}
                 onDiscussInChat={onDiscussJournalEntry}
+              />
+            </Suspense>
+          ) : null}
+          {!isRuntimeActive && activeViewId === 'intent-todo' ? (
+            <Suspense fallback={null}>
+              <IntentTodoPage
+                hidden={false}
+                projects={projects}
+                onTodayPendingCountChange={onIntentTodoPendingCountChange}
+                onOpenDispatchedThread={onOpenDispatchedThread}
+                onNavigateToJournalAnchor={onNavigateToJournalAnchor}
+                onOpenModelSettings={onOpenModelSettings}
               />
             </Suspense>
           ) : null}

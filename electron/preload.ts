@@ -42,6 +42,22 @@ import type {
   FeishuBridgeStatus,
 } from '../src/journal-contract'
 import type {
+  JournalAutoTagChangedEvent,
+  JournalAutoTagConfig,
+  JournalAutoTagRunResult,
+  JournalAutoTagStatus,
+} from '../src/journal-auto-tag-contract'
+import type {
+  IntentTodoActionResult,
+  IntentTodoCalendarDay,
+  IntentTodoChangedEvent,
+  IntentTodoConfig,
+  IntentTodoDecisionInput,
+  IntentTodoDispatchResult,
+  IntentTodoOverview,
+  IntentTodoRefreshResult,
+} from '../src/intent-todo-contract'
+import type {
   ActiveChatPickPayload,
   ClaudeAgentSettings,
   ClaudeAgentStatusRequest,
@@ -546,6 +562,46 @@ const desktopAdapter = {
     const listener = (_event: IpcRendererEvent, status: FeishuBridgeStatus) => handler(status)
     ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onFeishuJournalBridgeStatus, listener)
     return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onFeishuJournalBridgeStatus, listener)
+  },
+  getJournalAutoTagStatus() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getJournalAutoTagStatus) as Promise<JournalAutoTagStatus>
+  },
+  runJournalAutoTag(options?: { date?: string; force?: boolean }) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.runJournalAutoTag, options) as Promise<JournalAutoTagRunResult>
+  },
+  saveJournalAutoTagConfig(patch: Partial<JournalAutoTagConfig>) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.saveJournalAutoTagConfig, patch) as Promise<JournalAutoTagConfig>
+  },
+  onJournalAutoTagChanged(handler: (event: JournalAutoTagChangedEvent) => void) {
+    const listener = (_event: IpcRendererEvent, event: JournalAutoTagChangedEvent) => handler(event)
+    ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onJournalAutoTagChanged, listener)
+    return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onJournalAutoTagChanged, listener)
+  },
+  getIntentTodoOverview(selectedDate?: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getIntentTodoOverview, selectedDate) as Promise<IntentTodoOverview>
+  },
+  listIntentTodoCalendar() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.listIntentTodoCalendar) as Promise<IntentTodoCalendarDay[]>
+  },
+  refreshIntentTodo(selectedDate?: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.refreshIntentTodo, selectedDate) as Promise<IntentTodoRefreshResult>
+  },
+  decideIntentTodo(itemId: string, decision: IntentTodoDecisionInput, selectedDate?: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.decideIntentTodo, itemId, decision, selectedDate) as Promise<IntentTodoActionResult>
+  },
+  dispatchIntentTodo(params: { itemId: string; projectId?: string; sandboxedLife?: boolean; selectedDate?: string }) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.dispatchIntentTodo, params) as Promise<IntentTodoDispatchResult>
+  },
+  getIntentTodoConfig() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getIntentTodoConfig) as Promise<IntentTodoConfig>
+  },
+  saveIntentTodoConfig(patch: Partial<IntentTodoConfig>) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.saveIntentTodoConfig, patch) as Promise<IntentTodoConfig>
+  },
+  onIntentTodoChanged(handler: (event: IntentTodoChangedEvent) => void) {
+    const listener = (_event: IpcRendererEvent, event: IntentTodoChangedEvent) => handler(event)
+    ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onIntentTodoChanged, listener)
+    return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onIntentTodoChanged, listener)
   },
 } satisfies DesktopAPI
 

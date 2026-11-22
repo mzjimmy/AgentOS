@@ -335,6 +335,7 @@ export function AppShell() {
   const [activeViewId, setActiveViewId] = useState<AppViewId>(() => viewFromLocation())
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategoryId>(() => settingsCategoryFromLocation())
   const [journalTodayCount, setJournalTodayCount] = useState<number | undefined>(undefined)
+  const [intentTodoPendingCount, setIntentTodoPendingCount] = useState<number | undefined>(undefined)
   const [canBack, setCanBack] = useState(false)
   const [canForward, setCanForward] = useState(false)
   const [headerStatus, setHeaderStatus] = useState(() => translate(getInitialLocale(), 'shell.headerDefault'))
@@ -1770,6 +1771,24 @@ export function AppShell() {
     [goHome, setActiveLocalAppPreviewVisible, updateChatWorkspace, workspaceSession],
   )
 
+  const startNewProjectChat = useCallback(
+    (projectId: string) => {
+      if (chatWorkspace?.projectHomeViewModes[projectId] === 'runtime') {
+        applyProjectHomeViewMode(projectId, 'overview')
+      }
+      selectProject(projectId)
+    },
+    [applyProjectHomeViewMode, chatWorkspace?.projectHomeViewModes, selectProject],
+  )
+
+  const openProjectRuntime = useCallback(
+    (projectId: string) => {
+      applyProjectHomeViewMode(projectId, 'runtime')
+      selectProject(projectId)
+    },
+    [applyProjectHomeViewMode, selectProject],
+  )
+
   const createProjectFromExistingPath = useCallback(
     async (projectPath: string) => {
       const value = projectPath.trim()
@@ -2195,24 +2214,14 @@ export function AppShell() {
 
   useEffect(() => {
     if (!chatWorkspace || !window.desktop?.startRuntime) return
-    const pending: Array<{ definitionId: string; tabId: string }> = []
-    for (const definition of chatWorkspace.runtimeDefinitions) {
-      if (!definition.autoStart || definition.trustStatus !== 'trusted') continue
-      for (const tab of chatWorkspace.workspaceTabs.filter((item) => item.runtimeDefinitionId === definition.id)) {
-        if (restoredLocalAppsRef.current.has(tab.id)) continue
-        restoredLocalAppsRef.current.add(tab.id)
-        pending.push({ definitionId: definition.id, tabId: tab.id })
-      }
-    }
-    // Starting several npm processes at once makes the active tab slower and
-    // can saturate disk/CPU. Restore the visible tab first, then warm the rest
-    // sequentially in the background.
-    pending.sort((left, right) => Number(right.tabId === chatWorkspace.activeWorkspaceTabId) - Number(left.tabId === chatWorkspace.activeWorkspaceTabId))
-    void (async () => {
-      for (const item of pending) {
-        await startLocalApp(item.definitionId, 'restore', item.tabId)
-      }
-    })()
+    const activeTabId = chatWorkspace.activeWorkspaceTabId
+    if (!activeTabId) return
+    const activeTab = chatWorkspace.workspaceTabs.find((item) => item.id === activeTabId)
+    if (!activeTab || restoredLocalAppsRef.current.has(activeTab.id)) return
+    const definition = chatWorkspace.runtimeDefinitions.find((item) => item.id === activeTab.runtimeDefinitionId)
+    if (!definition || !definition.autoStart || definition.trustStatus !== 'trusted') return
+    restoredLocalAppsRef.current.add(activeTab.id)
+    void startLocalApp(definition.id, 'restore', activeTab.id)
   }, [chatWorkspace, startLocalApp])
 
   const updateInitialModelField = useCallback(
@@ -2677,6 +2686,44 @@ export function AppShell() {
   )
 
   const discussingJournalRef = useRef(false)
+
+  useEffect(() => {
+    void window.desktop?.getIntentTodoOverview?.()
+      .then((overview) => {
+        if (overview && typeof overview.todayPendingCount === 'number') {
+          setIntentTodoPendingCount(overview.todayPendingCount)
+        }
+      })
+      .catch(() => undefined)
+    const unsubscribe = window.desktop?.onIntentTodoChanged?.((event) => {
+      setIntentTodoPendingCount(event.todayPendingCount)
+    })
+    return () => unsubscribe?.()
+  }, [])
+
+  const openDispatchedThread = useCallback(
+    async (projectId: string, threadId: string) => {
+      void setActiveLocalAppPreviewVisible(false)
+      setSelectedProjectSkill(null)
+      if (projectChatReadinessRef.current !== 'legacy' && window.projectChat) {
+        await refreshProjectChatSnapshot(projectId).catch(() => undefined)
+      }
+      updateChatWorkspace((prev) => workspaceSession.selectThread(prev, threadId))
+      goHome()
+    },
+    [goHome, refreshProjectChatSnapshot, setActiveLocalAppPreviewVisible, updateChatWorkspace, workspaceSession],
+  )
+
+  const navigateToJournalAnchor = useCallback(
+    (date: string, entryId: string) => {
+      void setActiveLocalAppPreviewVisible(false)
+      setSelectedProjectSkill(null)
+      setActiveViewId('journal')
+      const nextHash = `journal/${date}/${encodeURIComponent(entryId)}`
+      window.location.hash = nextHash
+    },
+    [setActiveLocalAppPreviewVisible],
+  )
 
   const discussJournalEntryInChat = useCallback(
     async (entry: JournalEntry, target: JournalDiscussTarget) => {
@@ -3281,8 +3328,14 @@ export function AppShell() {
           onOpenSearch={() => window.dispatchEvent(new CustomEvent('agentos:open-search', { detail: { scope: 'all' } }))}
           onOpenPinnedModule={openPinnedModule}
           journalTodayCount={journalTodayCount}
+          pinnedBadgeCounts={{
+            journal: journalTodayCount,
+            'intent-todo': intentTodoPendingCount,
+          }}
           onOpenSettingsCategory={openSettingsCategory}
           onSelectProject={selectProject}
+          onNewProjectThread={startNewProjectChat}
+          onOpenProjectRuntime={openProjectRuntime}
           onSelectThread={selectThread}
           onSelectProjectSkill={selectProjectSkill}
           onRunProjectSkill={runProjectSkill}
@@ -3353,6 +3406,10 @@ export function AppShell() {
           onShowProjectSkillsInSidebarChange={updateShowProjectSkillsInSidebar}
           onJournalTodayCountChange={setJournalTodayCount}
           onDiscussJournalEntry={discussJournalEntryInChat}
+          onIntentTodoPendingCountChange={setIntentTodoPendingCount}
+          onOpenDispatchedThread={(projectId, threadId) => void openDispatchedThread(projectId, threadId)}
+          onNavigateToJournalAnchor={navigateToJournalAnchor}
+          onOpenModelSettings={() => openSettingsCategory('general')}
         />
         <RuntimeOnboardingDialog
           inspect={localAppInspect}
