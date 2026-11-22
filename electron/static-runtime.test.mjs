@@ -905,3 +905,123 @@ test('an editing session still forces the dev server and a static artifact still
     rmSync(serverOnly, { recursive: true, force: true })
   }
 })
+
+// --- P0 Guardrails: bounded runtime source traversal ---
+
+test('fingerprintRuntimeSource and newestRuntimeSourceMtime ignore heavy non-source directories', async () => {
+  const root = mkdtempSync(resolve(tmpdir(), 'agentos-runtime-source-ignore-'))
+  try {
+    assert.equal(staticRuntime.RUNTIME_SOURCE_MAX_FILES, 5000)
+    assert.equal(staticRuntime.RUNTIME_SOURCE_MAX_DEPTH, 8)
+    for (const dir of [
+      '.git', 'node_modules', '.next', staticRuntime.SERVER_BUNDLE_BACKUP_DIRECTORY,
+      '.venv', 'venv', 'dist', 'build', 'target', 'out', '__pycache__', '.cache',
+      'Pods', 'DerivedData', '.turbo', '.nuxt', 'coverage', 'release',
+    ]) {
+      assert.ok(staticRuntime.RUNTIME_SOURCE_IGNORED_DIRS.includes(dir), `expected ${dir} in RUNTIME_SOURCE_IGNORED_DIRS`)
+    }
+
+    mkdirSync(resolve(root, 'src'), { recursive: true })
+    writeFileSync(resolve(root, 'src', 'index.ts'), 'export const x = 1\n')
+    const baseFingerprint = await staticRuntime.fingerprintRuntimeSource(root, 'custom-out')
+    const baseMtime = await staticRuntime.newestRuntimeSourceMtime(root, 'custom-out')
+
+    // Populate heavy ignored directories at root and nested levels, plus custom outputRoot
+    for (const ignoredPath of [
+      '.venv/lib/python3.11/site-packages/pkg.py',
+      'venv/bin/activate',
+      'dist/bundle.js',
+      'build/output.js',
+      'target/debug/app',
+      'out/index.html',
+      '__pycache__/mod.cpython-311.pyc',
+      'src/__pycache__/helper.cpython-311.pyc',
+      '.cache/cache.json',
+      'Pods/PodA/file.m',
+      'DerivedData/Build/file.o',
+      '.turbo/turbo-build.json',
+      '.nuxt/dist/server.mjs',
+      'coverage/lcov.info',
+      'release/mac-arm64/App.app/Contents/MacOS/App',
+      'custom-out/asset.js',
+    ]) {
+      const fullPath = resolve(root, ignoredPath)
+      mkdirSync(dirname(fullPath), { recursive: true })
+      writeFileSync(fullPath, `ignored-${ignoredPath}`)
+    }
+
+    const afterIgnoredFingerprint = await staticRuntime.fingerprintRuntimeSource(root, 'custom-out')
+    const afterIgnoredMtime = await staticRuntime.newestRuntimeSourceMtime(root, 'custom-out')
+    assert.equal(afterIgnoredFingerprint, baseFingerprint)
+    assert.equal(afterIgnoredMtime, baseMtime)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('fingerprintRuntimeSource and newestRuntimeSourceMtime enforce maxFiles cap deterministically', async () => {
+  const root = mkdtempSync(resolve(tmpdir(), 'agentos-runtime-source-max-files-'))
+  const twoFileRoot = mkdtempSync(resolve(tmpdir(), 'agentos-runtime-source-two-files-'))
+  try {
+    writeFileSync(resolve(root, 'a.txt'), 'a')
+    writeFileSync(resolve(root, 'b.txt'), 'b')
+    writeFileSync(resolve(root, 'c.txt'), 'c')
+    writeFileSync(resolve(root, 'd.txt'), 'd')
+
+    writeFileSync(resolve(twoFileRoot, 'a.txt'), 'a')
+    writeFileSync(resolve(twoFileRoot, 'b.txt'), 'b')
+
+    const cappedFirst = await staticRuntime.fingerprintRuntimeSource(root, undefined, { maxFiles: 2 })
+    // Mutating files after the lexicographical maxFiles cutoff must not change the capped fingerprint
+    writeFileSync(resolve(root, 'c.txt'), 'c-modified-1')
+    writeFileSync(resolve(root, 'd.txt'), 'd-modified-1')
+    const cappedSecond = await staticRuntime.fingerprintRuntimeSource(root, undefined, { maxFiles: 2 })
+    assert.equal(cappedSecond, cappedFirst)
+
+    // Capped fingerprint incorporates a deterministic truncation marker so it differs from an uncapped 2-file tree
+    const uncappedTwoFiles = await staticRuntime.fingerprintRuntimeSource(twoFileRoot, undefined, { maxFiles: 10 })
+    assert.notEqual(cappedFirst, uncappedTwoFiles)
+
+    // newestRuntimeSourceMtime respects maxFiles cap
+    const mtimeBefore = await staticRuntime.newestRuntimeSourceMtime(root, undefined, { maxFiles: 2 })
+    writeFileSync(resolve(root, 'd.txt'), 'd-newer')
+    const mtimeAfter = await staticRuntime.newestRuntimeSourceMtime(root, undefined, { maxFiles: 2 })
+    assert.equal(mtimeAfter, mtimeBefore)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(twoFileRoot, { recursive: true, force: true })
+  }
+})
+
+test('fingerprintRuntimeSource and newestRuntimeSourceMtime enforce maxDepth cap deterministically', async () => {
+  const root = mkdtempSync(resolve(tmpdir(), 'agentos-runtime-source-max-depth-'))
+  try {
+    // depth 1: a.txt
+    // depth 2: d1/b.txt
+    // depth 3: d1/d2/c.txt (exceeds maxDepth: 2)
+    // depth 4: d1/d2/d3/d.txt (exceeds maxDepth: 2)
+    mkdirSync(resolve(root, 'd1', 'd2', 'd3'), { recursive: true })
+    writeFileSync(resolve(root, 'a.txt'), 'a')
+    writeFileSync(resolve(root, 'd1', 'b.txt'), 'b')
+    writeFileSync(resolve(root, 'd1', 'd2', 'c.txt'), 'c')
+    writeFileSync(resolve(root, 'd1', 'd2', 'd3', 'd.txt'), 'd')
+
+    const cappedFirst = await staticRuntime.fingerprintRuntimeSource(root, undefined, { maxDepth: 2 })
+    const mtimeFirst = await staticRuntime.newestRuntimeSourceMtime(root, undefined, { maxDepth: 2 })
+
+    // Modifying files deeper than maxDepth: 2 must not affect capped fingerprint or mtime
+    writeFileSync(resolve(root, 'd1', 'd2', 'c.txt'), 'c-modified')
+    writeFileSync(resolve(root, 'd1', 'd2', 'd3', 'd.txt'), 'd-modified')
+    const cappedSecond = await staticRuntime.fingerprintRuntimeSource(root, undefined, { maxDepth: 2 })
+    const mtimeSecond = await staticRuntime.newestRuntimeSourceMtime(root, undefined, { maxDepth: 2 })
+    assert.equal(cappedSecond, cappedFirst)
+    assert.equal(mtimeSecond, mtimeFirst)
+
+    // Modifying a file within maxDepth: 2 must change the fingerprint
+    writeFileSync(resolve(root, 'd1', 'b.txt'), 'b-modified')
+    const cappedChanged = await staticRuntime.fingerprintRuntimeSource(root, undefined, { maxDepth: 2 })
+    assert.notEqual(cappedChanged, cappedFirst)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

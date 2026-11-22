@@ -603,43 +603,118 @@ export async function fingerprintStaticSource(
 /** Build output AgentOS itself writes next to a server bundle while updating it. */
 export const SERVER_BUNDLE_BACKUP_DIRECTORY = '.next.agentos-backup'
 
-/** Visit every source file in stable order, skipping VCS, dependencies and build output. */
-async function walkRuntimeSource(
+/** Heavy non-source directories excluded from runtime source traversal. */
+export const RUNTIME_SOURCE_IGNORED_DIRS = [
+  '.git',
+  'node_modules',
+  '.next',
+  SERVER_BUNDLE_BACKUP_DIRECTORY,
+  '.venv',
+  'venv',
+  'dist',
+  'build',
+  'target',
+  'out',
+  '__pycache__',
+  '.cache',
+  'Pods',
+  'DerivedData',
+  '.turbo',
+  '.nuxt',
+  'coverage',
+  'release',
+] as const
+
+export const RUNTIME_SOURCE_MAX_FILES = 5000
+export const RUNTIME_SOURCE_MAX_DEPTH = 8
+
+export type RuntimeSourceWalkOptions = {
+  maxFiles?: number
+  maxDepth?: number
+}
+
+export type RuntimeSourceWalkResult = {
+  visitedFiles: number
+  truncatedByMaxFiles: boolean
+  truncatedByMaxDepth: boolean
+}
+
+/** Visit source files in stable order with bounded depth/file count, skipping VCS, dependencies and build/runtime artifacts. */
+export async function walkRuntimeSource(
   projectRoot: string,
   outputRoot: string | undefined,
   onFile: (relative: string, fileStat: Awaited<ReturnType<typeof stat>>) => void,
-): Promise<void> {
-  const ignored = new Set(['.git', 'node_modules', '.next', SERVER_BUNDLE_BACKUP_DIRECTORY, ...(outputRoot ? [outputRoot] : [])])
-  const visit = async (directory: string, relative = ''): Promise<void> => {
+  options?: RuntimeSourceWalkOptions,
+): Promise<RuntimeSourceWalkResult> {
+  const maxFiles = options?.maxFiles ?? RUNTIME_SOURCE_MAX_FILES
+  const maxDepth = options?.maxDepth ?? RUNTIME_SOURCE_MAX_DEPTH
+  const normalizedOutputRoot = outputRoot ? normalizeStaticRelativePath(outputRoot) : undefined
+  const ignored = new Set<string>([
+    ...RUNTIME_SOURCE_IGNORED_DIRS,
+    ...(normalizedOutputRoot ? [normalizedOutputRoot] : []),
+  ])
+  let visitedFiles = 0
+  let truncatedByMaxFiles = false
+  let truncatedByMaxDepth = false
+
+  const visit = async (directory: string, relative = '', depth = 0): Promise<void> => {
+    if (truncatedByMaxFiles) return
+    if (depth >= maxDepth) {
+      truncatedByMaxDepth = true
+      return
+    }
     const entries = (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))
     for (const entry of entries) {
+      if (truncatedByMaxFiles) return
       const nextRelative = relative ? `${relative}/${entry.name}` : entry.name
-      if (ignored.has(nextRelative) || (!relative && ignored.has(entry.name))) continue
+      if (ignored.has(nextRelative) || ignored.has(entry.name)) continue
       const filePath = path.join(directory, entry.name)
+      const nextDepth = depth + 1
       if (entry.isDirectory()) {
-        await visit(filePath, nextRelative)
+        if (nextDepth >= maxDepth) {
+          truncatedByMaxDepth = true
+          continue
+        }
+        await visit(filePath, nextRelative, nextDepth)
       } else if (entry.isFile()) {
+        if (visitedFiles >= maxFiles) {
+          truncatedByMaxFiles = true
+          return
+        }
+        visitedFiles += 1
         onFile(nextRelative, await stat(filePath))
       }
     }
   }
   await visit(projectRoot)
+  return { visitedFiles, truncatedByMaxFiles, truncatedByMaxDepth }
 }
 
 /** Source-only fingerprint shared by static-capable and development-only sessions. */
-export async function fingerprintRuntimeSource(projectRoot: string, outputRoot?: string): Promise<string> {
+export async function fingerprintRuntimeSource(
+  projectRoot: string,
+  outputRoot?: string,
+  options?: RuntimeSourceWalkOptions,
+): Promise<string> {
   const hash = createHash('sha256')
-  await walkRuntimeSource(projectRoot, outputRoot, (relative, fileStat) => {
+  const result = await walkRuntimeSource(projectRoot, outputRoot, (relative, fileStat) => {
     hash.update(`${relative}:${fileStat.size}:${fileStat.mtimeMs}\n`)
-  })
+  }, options)
+  if (result.truncatedByMaxFiles || result.truncatedByMaxDepth) {
+    hash.update(`__truncated__:files=${result.truncatedByMaxFiles}:depth=${result.truncatedByMaxDepth}:visited=${result.visitedFiles}\n`)
+  }
   return hash.digest('hex')
 }
 
 /** Latest modification time of any source file; 0 for an empty tree. */
-export async function newestRuntimeSourceMtime(projectRoot: string, outputRoot?: string): Promise<number> {
+export async function newestRuntimeSourceMtime(
+  projectRoot: string,
+  outputRoot?: string,
+  options?: RuntimeSourceWalkOptions,
+): Promise<number> {
   let newest = 0
   await walkRuntimeSource(projectRoot, outputRoot, (_relative, fileStat) => {
     newest = Math.max(newest, Number(fileStat.mtimeMs))
-  })
+  }, options)
   return newest
 }

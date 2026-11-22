@@ -1475,6 +1475,7 @@ export const ChatPage = forwardRef<ChatPageHandle, ChatPageProps>(function ChatP
         return
       }
       if (scrollIntentRef.current === 'force-bottom' || isNearBottom(sr)) {
+        scrollIntentRef.current = 'none'
         sr.scrollTo({ top: sr.scrollHeight, behavior: 'auto' })
         setShowScrollButton(false)
         return

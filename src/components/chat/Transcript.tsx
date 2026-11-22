@@ -105,13 +105,14 @@ export const Transcript = memo(function Transcript({
         if (entry.kind === 'item') return renderItem(entry.item)
         if (entry.kind === 'process-group') {
           return (
-            <ProcessTraceBlock
-              key={`process-group-${entry.requestId}`}
-              liveStartedAt={entry.startedAt}
-              processItems={entry.processItems}
-              renderItem={renderItem}
-              isRunning
-            />
+            <Fragment key={`assistant-turn-${entry.requestId}`}>
+              <ProcessTraceBlock
+                liveStartedAt={entry.startedAt}
+                processItems={entry.processItems}
+                renderItem={renderItem}
+                isRunning
+              />
+            </Fragment>
           )
         }
         const requestId = getAssistantRequestId(entry.message)
@@ -120,7 +121,7 @@ export const Transcript = memo(function Transcript({
         const processDurationMs = entry.message.durationMs
         const hasProcessTrace = Boolean((processDurationMs || liveStartedAt) && (entry.processItems.length > 0 || isActiveAssistantTurn))
         return (
-          <Fragment key={`assistant-turn-${entry.message.id}`}>
+          <Fragment key={`assistant-turn-${requestId ?? entry.message.id}`}>
             {hasProcessTrace ? (
               <ProcessTraceBlock
                 durationMs={processDurationMs}
@@ -612,10 +613,6 @@ const ToolRow = memo(function ToolRow({ item }: { item: ChatToolItem }) {
   const [isOpen, setIsOpen] = useState(item.status === 'running')
   const isMcpTool = item.name.startsWith('mcp__')
 
-  useEffect(() => {
-    setIsOpen(item.status === 'running')
-  }, [item.status])
-
   const summary = (
     <>
       <span className={`status-row__chevron${hasDetails ? '' : ' status-row__chevron--hidden'}`} aria-hidden="true" />
@@ -640,9 +637,16 @@ const ToolRow = memo(function ToolRow({ item }: { item: ChatToolItem }) {
     data-transcript-item-id={item.id}
     data-testid={isMcpTool ? 'transcript-mcp-tool-call' : undefined}
     open={isOpen}
-      onToggle={(event) => handleTranscriptLayoutToggle(event, () => setIsOpen(event.currentTarget.open))}
     >
-      <summary className="status-row__summary">{summary}</summary>
+      <summary
+        className="status-row__summary"
+        onClick={(event) => {
+          event.preventDefault()
+          handleTranscriptLayoutToggle(event, () => setIsOpen((value) => !value))
+        }}
+      >
+        {summary}
+      </summary>
       <div className="status-row__body">{item.inputPreview ? <code>{item.inputPreview}</code> : null}</div>
     </details>
   )
@@ -712,10 +716,6 @@ const ThinkingRow = memo(function ThinkingRow({ item }: { item: ChatThinkingItem
   const hasDetails = Boolean(item.content.trim())
   const [isOpen, setIsOpen] = useState(item.status === 'running')
 
-  useEffect(() => {
-    setIsOpen(item.status === 'running')
-  }, [item.status])
-
   const summary = (
     <>
       <span className={`status-row__chevron${hasDetails ? '' : ' status-row__chevron--hidden'}`} aria-hidden="true" />
@@ -738,9 +738,16 @@ const ThinkingRow = memo(function ThinkingRow({ item }: { item: ChatThinkingItem
       className={`thinking-row thinking-row--${item.status}`}
       data-transcript-item-id={item.id}
       open={isOpen}
-      onToggle={(event) => handleTranscriptLayoutToggle(event, () => setIsOpen(event.currentTarget.open))}
     >
-      <summary className="thinking-row__header">{summary}</summary>
+      <summary
+        className="thinking-row__header"
+        onClick={(event) => {
+          event.preventDefault()
+          handleTranscriptLayoutToggle(event, () => setIsOpen((value) => !value))
+        }}
+      >
+        {summary}
+      </summary>
       {item.content ? <pre>{item.content}</pre> : null}
     </details>
   )
@@ -756,10 +763,6 @@ const ActivityRow = memo(function ActivityRow({ item }: { item: ChatActivityItem
   }
   const hasDetails = Boolean(item.preview?.trim())
   const [isOpen, setIsOpen] = useState(item.status === 'running')
-
-  useEffect(() => {
-    setIsOpen(item.status === 'running')
-  }, [item.status])
 
   const summary = (
     <>
@@ -784,9 +787,16 @@ const ActivityRow = memo(function ActivityRow({ item }: { item: ChatActivityItem
       className={`activity-row activity-row--${item.status}`}
       data-transcript-item-id={item.id}
       open={isOpen}
-      onToggle={(event) => handleTranscriptLayoutToggle(event, () => setIsOpen(event.currentTarget.open))}
     >
-      <summary className="activity-row__main">{summary}</summary>
+      <summary
+        className="activity-row__main"
+        onClick={(event) => {
+          event.preventDefault()
+          handleTranscriptLayoutToggle(event, () => setIsOpen((value) => !value))
+        }}
+      >
+        {summary}
+      </summary>
       {item.preview ? <pre>{item.preview}</pre> : null}
     </details>
   )

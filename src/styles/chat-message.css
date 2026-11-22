@@ -149,6 +149,9 @@
   flex-direction: column;
   gap: calc(var(--spacing) * 3);
   margin: calc(var(--spacing) * 2) 0 calc(var(--spacing) * 2);
+  max-height: min(320px, 40vh);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 
 .chat-message-actions {

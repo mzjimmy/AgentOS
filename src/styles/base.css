@@ -81,7 +81,7 @@ html[data-window-effects='mac-vibrancy'] body {
   --z-layer-modal-host: 2;
   --z-layer-sidebar: 2;
   --z-layer-splitter: 4;
-  --z-layer-chrome: 10;
+  --z-layer-chrome: 60;
   --z-layer-local-overlay: 20;
   --z-layer-menu: 80;
   --z-layer-project-menu: 90;

@@ -92,7 +92,9 @@
 .tool-row code {
   display: block;
   min-width: 0;
+  max-height: 220px;
   overflow: auto;
+  overscroll-behavior-y: contain;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
@@ -175,6 +177,7 @@
   margin: calc(var(--spacing) * 1) 0 0 calc(var(--spacing) * 7);
   max-height: 220px;
   overflow: auto;
+  overscroll-behavior-y: contain;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);

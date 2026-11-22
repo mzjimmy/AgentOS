@@ -1330,6 +1330,7 @@
   overflow-x: hidden;
   padding: calc(var(--spacing) * 8) calc(var(--spacing) * 6) calc(var(--spacing) * 5);
   scroll-behavior: auto;
+  overscroll-behavior-y: contain;
 }
 
 .chat-transcript {
