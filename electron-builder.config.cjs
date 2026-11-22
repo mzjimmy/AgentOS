@@ -16,6 +16,14 @@ const base = loadJson5(path.join(__dirname, 'electron-builder.json5'));
 const teamId = process.env.APPLE_TEAM_ID?.trim();
 const speechCliPath = path.join(__dirname, 'native', 'speech-cli', 'build', 'AgentOS Speech Helper.app');
 
+if (base.mac) {
+  for (const key of ['entitlements', 'entitlementsInherit']) {
+    if (typeof base.mac[key] === 'string' && !path.isAbsolute(base.mac[key])) {
+      base.mac[key] = path.resolve(__dirname, base.mac[key]);
+    }
+  }
+}
+
 if (fs.existsSync(speechCliPath)) {
   base.extraResources = [
     ...(Array.isArray(base.extraResources) ? base.extraResources : []),
