@@ -1,0 +1,973 @@
+/* 意图待办（Intent Todo）「纸 · 墨 · 黛」极简决策页样式 */
+
+.intent-todo-page {
+  position: relative;
+}
+
+.intent-todo-topbar-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-surface);
+  color: var(--j-ink-2);
+  font-family: var(--j-font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.intent-todo-topbar-refresh:hover:not(:disabled) {
+  border-color: var(--j-dai);
+  color: var(--j-dai);
+  background: var(--j-dai-soft);
+}
+
+.intent-todo-topbar-refresh:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.intent-todo-topbar-refresh.is-spinning svg {
+  animation: intent-todo-spin 1s linear infinite;
+}
+
+@keyframes intent-todo-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.intent-todo-scroll-canvas {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 32px 48px;
+}
+
+.intent-todo-canvas-inner {
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+/* --- Hero Header --- */
+
+.intent-todo-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.intent-todo-hero-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.intent-todo-hero-title-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.intent-todo-hero-date {
+  margin: 0;
+  font-family: var(--j-font-mono);
+  font-size: 36px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--j-ink-1);
+}
+
+.intent-todo-hero-meta {
+  font-size: 13.5px;
+  color: var(--j-ink-3);
+}
+
+.intent-todo-hero-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--j-ink-3);
+}
+
+.intent-todo-provider-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--j-line);
+  background: var(--j-surface);
+  color: var(--j-ink-2);
+  font-family: var(--j-font-mono);
+  font-size: 11px;
+}
+
+.intent-todo-model-picker {
+  display: inline-flex;
+  align-items: center;
+}
+
+.intent-todo-model-select {
+  height: 26px;
+  max-width: 320px;
+  padding: 0 24px 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--j-line);
+  background: var(--j-surface);
+  color: var(--j-ink-2);
+  font-family: var(--j-font-mono);
+  font-size: 11.5px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
+}
+
+.intent-todo-model-select:hover:not(:disabled) {
+  border-color: var(--j-line-strong);
+  color: var(--j-ink-1);
+}
+
+.intent-todo-model-select:focus-visible {
+  outline: none;
+  border-color: var(--j-dai);
+  box-shadow: 0 0 0 2px var(--j-dai-soft);
+}
+
+.intent-todo-model-select:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.intent-todo-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.intent-todo-hero-right {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.intent-todo-state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  border: 1px solid var(--j-line);
+  background: var(--j-surface);
+  color: var(--j-ink-2);
+}
+
+.intent-todo-state-pill.is-analyzing {
+  border-color: var(--j-dai);
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+}
+
+.intent-todo-state-pill.is-failed,
+.intent-todo-state-pill.is-needs_config {
+  border-color: var(--j-cinnabar);
+  background: var(--j-cinnabar-soft);
+  color: var(--j-cinnabar);
+}
+
+.intent-todo-state-pill.is-offline {
+  border-color: var(--j-amber);
+  background: var(--j-amber-soft);
+  color: var(--j-amber);
+}
+
+.intent-todo-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.intent-todo-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--j-line);
+  background: var(--j-surface);
+  color: var(--j-ink-2);
+  cursor: pointer;
+}
+
+.intent-todo-icon-btn:hover {
+  border-color: var(--j-line-strong);
+  color: var(--j-ink-1);
+}
+
+/* --- Settings Popover --- */
+
+.intent-todo-settings-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 300px;
+  padding: 14px 16px;
+  border-radius: 13px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-surface);
+  box-shadow: 0 12px 30px rgba(35, 34, 31, 0.14);
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.intent-todo-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--j-ink-1);
+}
+
+.intent-todo-settings-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--j-ink-3);
+}
+
+.intent-todo-settings-divider {
+  height: 1px;
+  background: var(--j-line);
+  margin: 2px 0;
+}
+
+.intent-todo-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--j-ink-2);
+}
+
+.intent-todo-input {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-canvas);
+  color: var(--j-ink-1);
+  font-family: var(--j-font-mono);
+  font-size: 11.5px;
+}
+
+.intent-todo-input:focus {
+  outline: none;
+  border-color: var(--j-dai);
+}
+
+/* --- Top Segmented Status Tabs --- */
+
+.intent-todo-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--j-line);
+  background: var(--j-sunken);
+}
+
+.intent-todo-tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--j-ink-3);
+  font-family: var(--j-font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.intent-todo-tab:hover {
+  color: var(--j-ink-1);
+}
+
+.intent-todo-tab.is-active {
+  background: var(--j-surface);
+  color: var(--j-ink-1);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(35, 34, 31, 0.08);
+}
+
+.intent-todo-tab-count {
+  font-family: var(--j-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--j-canvas);
+  color: var(--j-ink-3);
+}
+
+.intent-todo-tab.is-active .intent-todo-tab-count {
+  background: var(--j-sunken);
+  color: var(--j-ink-2);
+}
+
+/* --- Consent / Error / Read-only Banners --- */
+
+.intent-todo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  border-radius: 13px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-surface);
+  box-shadow: var(--j-shadow-card);
+}
+
+.intent-todo-banner.is-error {
+  border-color: var(--j-cinnabar);
+  background: var(--j-cinnabar-soft);
+  color: var(--j-cinnabar);
+}
+
+.intent-todo-banner.is-readonly {
+  padding: 10px 14px;
+  background: var(--j-sunken);
+  border-color: var(--j-line);
+  font-size: 12.5px;
+  color: var(--j-ink-2);
+}
+
+.intent-todo-banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.intent-todo-banner-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.intent-todo-banner-desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--j-ink-2);
+}
+
+.intent-todo-banner.is-error .intent-todo-banner-desc {
+  color: inherit;
+  opacity: 0.9;
+}
+
+/* --- Sections & Ultra-Clean Todo Rows --- */
+
+.intent-todo-section {
+  margin-bottom: 26px;
+}
+
+.intent-todo-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.intent-todo-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--j-ink-3);
+}
+
+.intent-todo-section-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  font-family: var(--j-font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--j-ink-3);
+  cursor: pointer;
+}
+
+.intent-todo-section-toggle:hover {
+  color: var(--j-ink-1);
+}
+
+.intent-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.intent-todo-row {
+  position: relative;
+  border-radius: 12px;
+  border: 1px solid var(--j-line);
+  background: var(--j-surface);
+  box-shadow: var(--j-shadow-card);
+  overflow: hidden;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.intent-todo-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--j-line-strong);
+}
+
+.intent-todo-row[data-urgency="high"]::before {
+  background: var(--j-cinnabar);
+}
+
+.intent-todo-row[data-urgency="medium"]::before {
+  background: var(--j-amber);
+}
+
+.intent-todo-row[data-urgency="low"]::before {
+  background: var(--j-line-strong);
+}
+
+.intent-todo-row:hover {
+  border-color: var(--j-line-strong);
+}
+
+.intent-todo-row.is-resolved {
+  opacity: 0.78;
+}
+
+.intent-todo-row.is-exiting {
+  opacity: 0.36;
+  pointer-events: none;
+  transition: opacity 240ms ease;
+}
+
+.intent-todo-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px 11px 16px;
+}
+
+.intent-todo-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font-family: inherit;
+}
+
+.intent-todo-row-topline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.intent-todo-title {
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: var(--j-ink-1);
+}
+
+.intent-todo-row.is-resolved .intent-todo-title {
+  text-decoration: line-through;
+  color: var(--j-ink-3);
+}
+
+.intent-todo-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--j-ink-3);
+}
+
+.intent-todo-track-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 550;
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+  flex-shrink: 0;
+}
+
+.intent-todo-track-pill.is-life {
+  background: var(--j-amber-soft);
+  color: var(--j-amber);
+}
+
+.intent-todo-reason-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--j-ink-3);
+}
+
+.intent-todo-reconfirm-label {
+  font-size: 12px;
+  color: var(--j-ink-3);
+  margin-right: 2px;
+}
+
+.intent-todo-time-tag {
+  font-family: var(--j-font-mono);
+  font-size: 11px;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.intent-todo-status-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+  flex-shrink: 0;
+}
+
+.intent-todo-status-chip.is-done {
+  background: var(--j-pine-soft);
+  color: var(--j-pine);
+}
+
+.intent-todo-status-chip.is-dropped {
+  background: var(--j-sunken);
+  color: var(--j-ink-3);
+}
+
+.intent-todo-closure-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--j-pine-soft);
+  color: var(--j-pine);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.intent-todo-git-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--j-pine-soft);
+  color: var(--j-pine);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.intent-todo-git-confirm {
+  border: 0;
+  background: transparent;
+  color: var(--j-pine);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.intent-todo-phase-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+}
+
+.intent-todo-phase-pill.is-waiting {
+  background: var(--j-amber-soft);
+  color: var(--j-amber);
+}
+
+.intent-todo-phase-pill.is-succeeded {
+  background: var(--j-pine-soft);
+  color: var(--j-pine);
+}
+
+.intent-todo-phase-pill.is-failed {
+  background: var(--j-cinnabar-soft);
+  color: var(--j-cinnabar);
+}
+
+/* --- Decision Buttons (Aligned compact rhythm: Primary | Secondary | sep | ✓ ×) --- */
+
+.intent-todo-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.intent-todo-actions-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: var(--j-line);
+  flex-shrink: 0;
+}
+
+.intent-todo-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 7px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-canvas);
+  color: var(--j-ink-2);
+  font-family: var(--j-font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.intent-todo-btn.is-primary-col {
+  min-width: 60px;
+}
+
+.intent-todo-btn.is-secondary-col {
+  min-width: 50px;
+}
+
+.intent-todo-btn.is-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--j-ink-3);
+}
+
+.intent-todo-row:hover .intent-todo-btn.is-ghost {
+  color: var(--j-ink-2);
+}
+
+.intent-todo-btn:hover:not(:disabled) {
+  background: var(--j-sunken);
+  border-color: var(--j-line-strong);
+  color: var(--j-ink-1);
+}
+
+.intent-todo-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Active selected feedback states — buttons only light up AFTER user clicks */
+.intent-todo-btn.is-selected-now {
+  border-color: var(--j-dai);
+  background: var(--j-dai);
+  color: var(--j-surface);
+  font-weight: 600;
+}
+
+.intent-todo-btn.is-selected-later {
+  border-color: var(--j-amber);
+  background: var(--j-amber);
+  color: var(--j-surface);
+  font-weight: 600;
+}
+
+.intent-todo-btn.is-selected-done {
+  border-color: var(--j-pine);
+  background: var(--j-pine);
+  color: var(--j-surface);
+}
+
+.intent-todo-btn.is-selected-dropped {
+  border-color: var(--j-cinnabar);
+  background: var(--j-cinnabar);
+  color: var(--j-surface);
+}
+
+.intent-todo-btn.is-primary-solid {
+  border-color: var(--j-ink-1);
+  background: var(--j-ink-1);
+  color: var(--j-surface);
+  font-weight: 600;
+}
+
+.intent-todo-btn.is-primary-solid:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.intent-todo-btn.is-icon-only {
+  width: 28px;
+  padding: 0;
+}
+
+.intent-todo-btn.is-done:hover:not(:disabled) {
+  border-color: var(--j-pine);
+  background: var(--j-pine-soft);
+  color: var(--j-pine);
+}
+
+.intent-todo-btn.is-drop:hover:not(:disabled) {
+  border-color: var(--j-cinnabar);
+  background: var(--j-cinnabar-soft);
+  color: var(--j-cinnabar);
+}
+
+/* --- Inline First-Dispatch Project Confirmation Bar --- */
+
+.intent-todo-confirm-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--j-line);
+  background: var(--j-amber-soft);
+  font-size: 12px;
+  color: var(--j-ink-1);
+}
+
+.intent-todo-confirm-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.intent-todo-select {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-surface);
+  color: var(--j-ink-1);
+  font-family: var(--j-font-sans);
+  font-size: 12px;
+}
+
+/* --- Expandable 2nd-Layer Drawer --- */
+
+.intent-todo-drawer {
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--j-line);
+  background: var(--j-canvas);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--j-ink-2);
+}
+
+.intent-todo-anchor-flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--j-dai);
+  background: var(--j-surface);
+  border-radius: 0 8px 8px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--j-ink-1);
+}
+
+.intent-todo-anchor-flags-label {
+  color: var(--j-ink-2);
+}
+
+.intent-todo-anchor-flags-value {
+  color: var(--j-ink-1);
+}
+
+.intent-todo-drawer-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.intent-todo-anchor-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: var(--j-font-mono);
+  font-size: 11.5px;
+  color: var(--j-dai);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.intent-todo-antipatterns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.intent-todo-antipattern-tag {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--j-cinnabar-soft);
+  color: var(--j-cinnabar);
+  font-size: 11.5px;
+}
+
+/* --- Empty States & Triage Footer --- */
+
+.intent-todo-empty {
+  padding: 44px 20px;
+  text-align: center;
+  border-radius: 14px;
+  border: 1px dashed var(--j-line-strong);
+  background: var(--j-surface);
+  color: var(--j-ink-3);
+}
+
+.intent-todo-empty-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--j-ink-2);
+}
+
+.intent-todo-empty-sub {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.intent-todo-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--j-line);
+  font-size: 12px;
+  color: var(--j-ink-3);
+}
+
+.intent-todo-footer-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--j-dai);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* --- Non-blocking Dispatch Toast --- */
+
+.intent-todo-toast {
+  position: fixed;
+  right: 28px;
+  bottom: 24px;
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 11px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-ink-1);
+  color: var(--j-surface);
+  font-size: 12.5px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.intent-todo-toast-action {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--j-dai-soft);
+  font-weight: 600;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

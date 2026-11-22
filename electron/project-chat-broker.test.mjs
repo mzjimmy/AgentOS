@@ -381,12 +381,18 @@ test('broker keeps a visible failed thread, does not restore live runs, and pres
 
 test('broker persists website source and submits only durable runner authority fields', async () => {
   let permissionReads = 0
+  let permissionMode = 'plan'
   const durableThread = {
     id: 'thread-durable', projectId: 'project-1', title: 'Durable', createdAt: 1, updatedAt: 1,
     creationSource: { kind: 'user' },
     chatState: { model: 'Claude Agent', sessionId: 'session-durable', cwd: '/thread-must-not-win', modelPick: { providerId: 'durable-provider', anthropicModel: 'durable-model' }, items: [] },
   }
-  const harness = makeHarness(workspace([durableThread]), { permissionMode: () => { permissionReads += 1; return 'plan' } })
+  const harness = makeHarness(workspace([durableThread]), {
+    permissionMode: () => {
+      permissionReads += 1
+      return permissionMode
+    },
+  })
   const website = await harness.broker.createThread({ projectId: 'project-1', title: 'From website', source: 'website', idempotencyKey: 'receipt-1', bindingId: 'binding-1', receivedAt: 55 })
   assert.equal(website.ok, true)
   assert.deepEqual(harness.state().threads[0].creationSource, { kind: 'website', bindingId: 'binding-1', receivedAt: 55 })
@@ -400,9 +406,11 @@ test('broker persists website source and submits only durable runner authority f
   assert.deepEqual(harness.runner.resets, [durableThread.id])
   assert.equal(permissionReads, 2, 'one create snapshot read plus one submit capture')
   harness.broker.advanceRouteGeneration('project-1')
+  permissionMode = 'bypassPermissions'
   const fallback = await harness.broker.submitRun({ projectId: 'project-1', threadId: durableThread.id, text: 'fallback model' })
   assert.equal(fallback.ok, true)
   assert.deepEqual(harness.runner.submitted[1].modelPick, { providerId: 'explicit-provider', anthropicModel: 'explicit-model' })
+  assert.equal(harness.runner.submitted[1].permissionMode, 'bypassPermissions')
   assert.equal(permissionReads, 3, 'each submit captures permission mode exactly once')
 })
 

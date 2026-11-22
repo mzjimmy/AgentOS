@@ -70,8 +70,12 @@ export type ProjectChatManagedRunInput = {
   agentModeSettingsOverride: { enabled: true; todoEnabled: boolean }
 }
 
-/** Main-derived request context; renderer DTOs cannot opt into Runtime prompting. */
-export type ProjectChatRunContext = { projectRuntimePrompt?: boolean }
+/** Main-derived request context; renderer DTOs cannot opt into Runtime prompting or permission overrides. */
+export type ProjectChatRunContext = {
+  projectRuntimePrompt?: boolean
+  permissionModeOverride?: ClaudePermissionMode
+  cwdOverride?: string
+}
 
 export type ProjectChatBrokerOptions = {
   store: ProjectChatBrokerStore
@@ -265,14 +269,15 @@ export class ProjectChatBroker implements ClaudeChatEventSink {
       const persistedThread = { ...thread, title, updatedAt: now, chatState: { ...thread.chatState, ...(modelChanged ? { sessionId: undefined, model: input.modelPick!.anthropicModel, modelPick: input.modelPick } : {}), items: [...thread.chatState.items, userMessage] } }
       const saved = await this.saveMutation({ ...state, threads: state.threads.map((candidate) => candidate.id === thread.id ? persistedThread : candidate) })
       const run: ProjectChatRunSnapshot = { projectId: input.projectId, threadId: input.threadId, requestId: pendingRequestId, phase: 'submitting', routeGeneration, startedAt: now }
-      const permissionMode = this.permissionMode()
+      const permissionMode = context.permissionModeOverride ?? this.permissionMode()
+      const effectiveCwd = context.cwdOverride?.trim() || project.path
 
       try {
-        await this.options.onProjectRunStarting?.(project.id, project.path)
+        await this.options.onProjectRunStarting?.(project.id, effectiveCwd)
         const submitted = await this.core.submit(projectRoute(input.projectId, input.threadId, routeGeneration, now), {
           text: input.text, attachments: runnerAttachments, threadId: input.threadId,
           modelPick: persistedThread.chatState.modelPick, handoffContext: input.handoffContext,
-          sessionId: persistedThread.chatState.sessionId, cwd: project.path, projectId: project.id,
+          sessionId: persistedThread.chatState.sessionId, cwd: effectiveCwd, projectId: project.id,
           projectRuntimePrompt: context.projectRuntimePrompt === true, permissionMode,
           ...(thread.purpose === 'home-plugin-card-customization' ? { promptMode: thread.purpose } : {}),
         }, pendingRequestId)

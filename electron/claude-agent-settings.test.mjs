@@ -26,6 +26,16 @@ function loadSettingsModule() {
   const module = { exports: {} }
   const localRequire = (specifier) => {
     if (specifier === './safe-console') return { safeConsoleInfo() {} }
+    if (specifier === './anthropic-messages-client') {
+      const clientPath = resolve(testDir, 'anthropic-messages-client.ts')
+      const clientOut = ts.transpileModule(readFileSync(clientPath, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true },
+        fileName: clientPath,
+      }).outputText
+      const clientMod = { exports: {} }
+      Function('exports', 'module', 'require', clientOut)(clientMod.exports, clientMod, require)
+      return clientMod.exports
+    }
     if (specifier === '../src/model-provider-presets.json') return presetCatalog
     return require(specifier)
   }

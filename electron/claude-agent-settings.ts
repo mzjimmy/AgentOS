@@ -18,6 +18,7 @@ import type {
   ClaudeAgentSettingsSnapshot,
 } from '../src/claude-chat-types'
 import { safeConsoleInfo } from './safe-console'
+import { buildAnthropicMessagesEndpoint } from './anthropic-messages-client'
 import providerPresetCatalog from '../src/model-provider-presets.json'
 
 const SETTINGS_FILE_NAME = 'claude-agent-settings.json'
@@ -568,18 +569,6 @@ function selectProviderTestModel(provider: ClaudeAgentModelProvider): string {
   ]
     .map((value) => normalizeString(value))
     .find(Boolean) ?? ''
-}
-
-function buildAnthropicMessagesEndpoint(baseUrl: string): string {
-  const url = new URL(baseUrl)
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('Unsupported protocol')
-  }
-  const pathname = url.pathname.replace(/\/+$/, '')
-  url.pathname = pathname.endsWith('/v1') ? `${pathname}/messages` : `${pathname}/v1/messages`
-  url.search = ''
-  url.hash = ''
-  return url.toString()
 }
 
 async function readProviderTestError(response: Response): Promise<string> {
