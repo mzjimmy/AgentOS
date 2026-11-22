@@ -643,3 +643,298 @@ test('shouldShowLegacySyncButton hides legacy sync controls on future dates and 
   assert.match(pageSource, /shouldShowLegacySyncButton/)
   assert.match(pageSource, /isFutureJournalDate/)
 })
+
+test('extractJournalLinks parses platform badges, strips trailing punctuation, deduplicates, and cleans bare URLs', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  const wx = helpers.extractJournalLinks(
+    '看到一篇好文章 https://mp.weixin.qq.com/s/AbCdEf123?utm_source=feishu。回头整理到02项目',
+  )
+  assert.equal(wx.links.length, 1)
+  assert.equal(wx.links[0].url, 'https://mp.weixin.qq.com/s/AbCdEf123?utm_source=feishu')
+  assert.equal(wx.links[0].platform, '微信公众号')
+  assert.equal(wx.links[0].host, 'mp.weixin.qq.com')
+  assert.equal(wx.displayBody, '看到一篇好文章 回头整理到02项目')
+
+  const multi = helpers.extractJournalLinks(
+    '参考 https://github.com/mzjimmy/outside-agent；以及 https://app.notion.com/p/41cc5f6f 和重复的 https://github.com/mzjimmy/outside-agent）',
+  )
+  assert.equal(multi.links.length, 2)
+  assert.equal(multi.links[0].platform, 'GitHub')
+  assert.equal(multi.links[0].url, 'https://github.com/mzjimmy/outside-agent')
+  assert.equal(multi.links[1].platform, 'Notion')
+  assert.equal(multi.links[1].url, 'https://app.notion.com/p/41cc5f6f')
+
+  const noUrl = helpers.extractJournalLinks('纯文本随记，没有链接')
+  assert.equal(noUrl.links.length, 0)
+  assert.equal(noUrl.displayBody, '纯文本随记，没有链接')
+})
+
+test('planJournalDayLayout auto-morphs Feishu entries into balanced 12-col editorial spreads without mutating stored kind', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  const makeFeishu = (overrides) => ({
+    id: 'je_f',
+    date: '2026-11-22',
+    time: '08:00',
+    ts: '2026-11-22T00:00:00.000Z',
+    kind: 'note',
+    body: '',
+    category: '工程',
+    tags: [],
+    projectRefs: [],
+    source: 'feishu',
+    provenance: 'human',
+    images: [],
+    ...overrides,
+  })
+
+  const entries = [
+    // Two consecutive long Feishu notes -> pair-editorial-duo (sum=12) with contrasting box vs editorial-thought
+    makeFeishu({
+      id: 'f1',
+      time: '07:40',
+      ts: '2026-11-21T23:40:00Z',
+      body: '在上一轮变更里接好了 JEV 分类模型，我刚刚远程看了一下界面变化不明显，现在发几条飞书信息看看实际效果。',
+    }),
+    makeFeishu({
+      id: 'f2',
+      time: '07:47',
+      ts: '2026-11-21T23:47:00Z',
+      body: '意图识别的模块雏形基本上成型了。接下来应该继续修改的方向是维护时间日记这一条内容线，我会把一天接触到的公众号文章、视频号链接、好图片全部丢进这个窗口里，就像是一个大熔炉，由 JEV 模型做自动分类筛选并按需派发到对应工作台后台运行。',
+    }),
+    // Feishu URL bookmark entry
+    makeFeishu({
+      id: 'f3',
+      time: '08:05',
+      ts: '2026-11-22T00:05:00Z',
+      body: '这篇关于 Agent 设计模式很有启发 https://mp.weixin.qq.com/s/xyz987',
+    }),
+    // Short Feishu life check-in -> auto-moment pill
+    makeFeishu({
+      id: 'f4',
+      time: '10:41',
+      ts: '2026-11-22T02:41:00Z',
+      category: '生活',
+      body: '阴天，吃完了早餐，准备出去骑自行车。',
+    }),
+  ]
+
+  const layout = helpers.planJournalDayLayout(entries)
+  assert.equal(layout.length, 4)
+
+  // f1 + f2 paired cleanly into 12 columns preserving chronological order
+  assert.equal(layout[0].entry.id, 'f1')
+  assert.equal(layout[1].entry.id, 'f2')
+  assert.equal(layout[0].groupKind, 'pair-editorial-duo')
+  assert.equal(layout[1].groupKind, 'pair-editorial-duo')
+  assert.equal(layout[0].rowStart, layout[1].rowStart)
+  assert.equal(layout[0].colSpan + layout[1].colSpan, 12)
+  assert.equal(layout[0].colStart, 1)
+  assert.equal(layout[1].colStart, layout[0].colSpan + 1)
+  // Visual weight contrast: one boxed ('default') and one borderless ('editorial-thought')
+  const pairPresentations = new Set([layout[0].presentation, layout[1].presentation])
+  assert.equal(pairPresentations.has('editorial-thought'), true, 'paired Feishu notes must alternate borderless editorial style')
+  assert.equal(pairPresentations.has('default'), true, 'paired Feishu notes must keep one paper card anchor')
+
+  // f3 URL share -> link-bookmark
+  assert.equal(layout[2].entry.id, 'f3')
+  assert.equal(layout[2].presentation, 'link-bookmark')
+
+  // f4 short life check-in -> auto-moment
+  assert.equal(layout[3].entry.id, 'f4')
+  assert.equal(layout[3].presentation, 'auto-moment')
+
+  // Strict A4 invariant: persisted entry.kind is NEVER mutated
+  for (const e of entries) {
+    assert.equal(e.kind, 'note')
+  }
+
+  // Collapse policy for editorial-thought & auto-moment
+  assert.equal(
+    helpers.resolveJournalBodyCollapsePolicy(entries[3], 'auto-moment').collapsible,
+    false,
+  )
+  assert.equal(
+    helpers.resolveJournalBodyCollapsePolicy(
+      makeFeishu({ body: '很长的飞书语音转写复盘文本内容。'.repeat(20) }),
+      'editorial-thought',
+    ).collapsible,
+    true,
+  )
+
+  // Verify JournalCard supports editorial-thought, auto-moment, link-bookmark, openExternal, and inline kind switcher
+  const cardSource = readFileSync(resolve(rootDir, 'src/components/journal/JournalCard.tsx'), 'utf8')
+  assert.match(cardSource, /editorial-thought/)
+  assert.match(cardSource, /auto-moment/)
+  assert.match(cardSource, /link-bookmark/)
+  assert.match(cardSource, /extractJournalLinks/)
+  assert.match(cardSource, /openExternal/)
+  assert.match(cardSource, /draftKind/)
+})
+
+test('extractJournalLinks handles markdown links, balanced parens, parenthesized URLs, query-distinct paths, and bullet lines', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  // Markdown link [label](url) replaces with label and extracts clean URL
+  const md = helpers.extractJournalLinks('查看 [设计文档](https://github.com/mzjimmy/AgentOS) 了解详情')
+  assert.equal(md.links.length, 1)
+  assert.equal(md.links[0].url, 'https://github.com/mzjimmy/AgentOS')
+  assert.equal(md.links[0].platform, 'GitHub')
+  assert.equal(md.displayBody, '查看 设计文档 了解详情')
+
+  // Balanced parentheses in URL (Wikipedia-style) preserved intact
+  const wiki = helpers.extractJournalLinks(
+    '参考 (https://en.wikipedia.org/wiki/Rust_(programming_language)) 对比内存模型',
+  )
+  assert.equal(wiki.links.length, 1)
+  assert.equal(wiki.links[0].url, 'https://en.wikipedia.org/wiki/Rust_(programming_language)')
+  assert.equal(wiki.displayBody, '参考 对比内存模型')
+
+  // Query-distinct URLs produce distinct displayPath
+  const yt = helpers.extractJournalLinks(
+    '视频1 https://www.youtube.com/watch?v=alpha111\n视频2 https://www.youtube.com/watch?v=beta222',
+  )
+  assert.equal(yt.links.length, 2)
+  assert.equal(yt.links[0].platform, 'YouTube')
+  assert.notEqual(yt.links[0].displayPath, yt.links[1].displayPath)
+  assert.match(yt.links[0].displayPath, /v=alpha111/)
+  assert.match(yt.links[1].displayPath, /v=beta222/)
+
+  // URL on line 1 followed by markdown bullet on line 2 preserves "- " prefix
+  const bullets = helpers.extractJournalLinks(
+    'https://mp.weixin.qq.com/s/test123\n- 要点一\n- 要点二',
+  )
+  assert.equal(bullets.links.length, 1)
+  assert.equal(bullets.displayBody, '- 要点一\n- 要点二')
+})
+
+test('planJournalDayLayout guards local thoughts, auto-moment pills, link-bookmark contrast, and boxed-run fatigue', () => {
+  const helpers = loadTsModule(resolve(rootDir, 'src/components/journal/journal-ui-helpers.ts'))
+
+  const makeEntry = (overrides) => ({
+    id: 'je_g',
+    date: '2026-11-22',
+    time: '09:00',
+    ts: '2026-11-22T01:00:00Z',
+    kind: 'note',
+    body: '',
+    category: '工程',
+    tags: [],
+    projectRefs: [],
+    source: 'feishu',
+    provenance: 'human',
+    images: [],
+    ...overrides,
+  })
+
+  // 1. Explicit local thought containing a URL is NOT hijacked into link-bookmark,
+  //    and when paired with a bridged note, the bridged note stays paper ('default') for contrast.
+  const localThoughtAndFeishu = helpers.planJournalDayLayout([
+    makeEntry({
+      id: 'lt1',
+      time: '09:00',
+      ts: '2026-11-22T01:00:00Z',
+      source: 'local',
+      kind: 'thought',
+      body: '刚想到一个新的交互思路，灵感来源 https://github.com/example/repo ，记录一下核心直觉。',
+    }),
+    makeEntry({
+      id: 'fn1',
+      time: '09:05',
+      ts: '2026-11-22T01:05:00Z',
+      source: 'feishu',
+      kind: 'note',
+      body: '同步在飞书上补充了详细的需求背景与边界条件，需要保持清晰的纸卡锚点方便后续对照。',
+    }),
+  ])
+  assert.equal(localThoughtAndFeishu[0].presentation, 'default')
+  assert.equal(localThoughtAndFeishu[1].groupKind, 'pair-editorial-duo')
+  assert.equal(localThoughtAndFeishu[1].presentation, 'default')
+
+  // 2. Consecutive short Feishu life moments stay 4-col auto-moment pills (not stretched into 6+6 pair-editorial-duo)
+  const twoMoments = helpers.planJournalDayLayout([
+    makeEntry({
+      id: 'm1',
+      time: '10:00',
+      ts: '2026-11-22T02:00:00Z',
+      category: '生活',
+      body: '早起喝了一杯手冲。',
+    }),
+    makeEntry({
+      id: 'm2',
+      time: '10:15',
+      ts: '2026-11-22T02:15:00Z',
+      category: '身体',
+      body: '出门慢跑五公里。',
+    }),
+  ])
+  assert.equal(twoMoments[0].presentation, 'auto-moment')
+  assert.equal(twoMoments[1].presentation, 'auto-moment')
+  assert.notEqual(twoMoments[0].groupKind, 'pair-editorial-duo')
+  assert.equal(twoMoments[0].colSpan, 4)
+  assert.equal(twoMoments[1].colSpan, 4)
+
+  // 3. link-bookmark + bridged note in pair-editorial-duo lightens the bridged note to editorial-thought
+  const linkPlusNote = helpers.planJournalDayLayout([
+    makeEntry({
+      id: 'lb1',
+      time: '11:00',
+      ts: '2026-11-22T03:00:00Z',
+      body: '非常有启发的一篇长文整理 https://mp.weixin.qq.com/s/abcdefg999 建议精读。',
+    }),
+    makeEntry({
+      id: 'fn2',
+      time: '11:10',
+      ts: '2026-11-22T03:10:00Z',
+      body: '结合这篇文章把我们当前的时间日记自动排版策略也再打磨一轮，特别是链接书签卡片与普通纸卡并排时的留白节奏。',
+    }),
+  ])
+  assert.equal(linkPlusNote[0].groupKind, 'pair-editorial-duo')
+  assert.equal(linkPlusNote[0].presentation, 'link-bookmark')
+  assert.equal(linkPlusNote[1].presentation, 'editorial-thought')
+
+  // 4. Consecutive boxed local notes (>= 2) cause the 3rd bridged note to auto-lighten to editorial-thought
+  const boxedFatigue = helpers.planJournalDayLayout([
+    makeEntry({
+      id: 'ln1',
+      time: '12:00',
+      ts: '2026-11-22T04:00:00Z',
+      source: 'local',
+      body: '本地长笔记一：'.repeat(16),
+    }),
+    makeEntry({
+      id: 'ln2',
+      time: '12:10',
+      ts: '2026-11-22T04:10:00Z',
+      source: 'local',
+      body: '本地长笔记二：'.repeat(16),
+    }),
+    makeEntry({
+      id: 'fn3',
+      time: '12:20',
+      ts: '2026-11-22T04:20:00Z',
+      source: 'feishu',
+      body: '第三条紧接着的飞书笔记，哪怕字数超过九十五字也应该自动轻量化打破连续三个方框的视觉疲劳，让整页版面保持呼吸感与层次对比。',
+    }),
+  ])
+  assert.equal(boxedFatigue[0].presentation, 'default')
+  assert.equal(boxedFatigue[1].presentation, 'default')
+  assert.equal(boxedFatigue[2].presentation, 'editorial-thought')
+
+  // 5. Collapse policy for link-bookmark evaluates cleaned displayBody (not URL length)
+  const shortLinkBody = makeEntry({
+    body: `简短评语 https://example.com/${'a'.repeat(260)}`,
+  })
+  assert.equal(
+    helpers.resolveJournalBodyCollapsePolicy(shortLinkBody, 'link-bookmark').collapsible,
+    false,
+  )
+  const longLinkBody = makeEntry({
+    body: `${'很长的文章摘录与深度思考。'.repeat(22)} https://example.com/post`,
+  })
+  assert.deepEqual(
+    helpers.resolveJournalBodyCollapsePolicy(longLinkBody, 'link-bookmark'),
+    { collapsible: true, collapsedLines: 5 },
+  )
+})

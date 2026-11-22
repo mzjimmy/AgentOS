@@ -913,6 +913,143 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   border-left-color: var(--j-ink-3);
 }
 
+.journal-card--editorial-auto {
+  padding: 12px 12px 12px 18px;
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--j-dai) 45%, var(--j-line-strong));
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.journal-card--editorial-auto:hover {
+  border-left-color: var(--j-dai);
+}
+
+.journal-card--auto-moment {
+  padding: 14px 18px 16px;
+  border-radius: 22px;
+  background: var(--j-sunken);
+  border: 1px solid var(--j-line);
+  text-align: left;
+}
+
+.journal-card--auto-moment .journal-moment-title {
+  text-align: center;
+  padding: 2px 4px;
+}
+
+.journal-card--link-bookmark {
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--j-surface);
+  border: 1px solid var(--j-line);
+  border-left: 3px solid var(--j-dai);
+  box-shadow: var(--j-shadow-card);
+}
+
+.journal-card--note.journal-card--link-bookmark:hover {
+  border-color: var(--j-line-strong);
+  border-left-color: var(--j-dai);
+}
+
+.journal-link-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.journal-link-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--j-line);
+  background: var(--j-sunken);
+  color: var(--j-ink-2);
+  font-family: var(--j-font-sans);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.journal-link-card:hover {
+  border-color: color-mix(in srgb, var(--j-dai) 45%, var(--j-line-strong));
+  background: var(--j-dai-soft);
+  color: var(--j-ink-1);
+}
+
+.journal-link-platform {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.journal-link-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--j-font-mono);
+  font-size: 11px;
+  color: var(--j-ink-3);
+}
+
+.journal-link-card:hover .journal-link-platform {
+  background: var(--j-surface);
+}
+
+.journal-link-card:hover .journal-link-url {
+  color: var(--j-dai);
+}
+
+.journal-link-arrow {
+  flex-shrink: 0;
+  color: var(--j-dai);
+  font-size: 12px;
+}
+
+.journal-card-edit-kinds {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.journal-kind-pill {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--j-line);
+  background: transparent;
+  color: var(--j-ink-3);
+  font-family: var(--j-font-sans);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.journal-kind-pill:hover {
+  border-color: var(--j-line-strong);
+  color: var(--j-ink-1);
+}
+
+.journal-kind-pill.is-selected {
+  border-color: var(--j-dai);
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+  font-weight: 600;
+}
+
 /* --- Species 4: Moment (Cream Oval / Pill Card) --- */
 
 .journal-card--moment {
@@ -950,6 +1087,7 @@ html[data-windows-titlebar-overlay='true'] .journal-topbar {
   font-weight: 500;
   color: var(--j-ink-1);
   line-height: 1.45;
+  word-break: break-word;
 }
 
 .journal-moment-subtitle {

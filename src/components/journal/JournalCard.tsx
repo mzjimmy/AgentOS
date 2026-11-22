@@ -12,12 +12,14 @@ import {
   type JournalCategory,
   type JournalDiscussTarget,
   type JournalEntry,
+  type JournalEntryKind,
   type UpdateJournalEntryInput,
 } from '../../journal-contract'
 import type { WorkspaceProject } from '../types'
 import {
   buildJournalDiscussTargets,
   classifyJournalCardSpan,
+  extractJournalLinks,
   getJournalCategorySlug,
   getNextJournalCategory,
   resolveEffectiveCardKind,
@@ -27,6 +29,12 @@ import {
   type JournalDayLayoutItem,
   type JournalPhotoOrientation,
 } from './journal-ui-helpers'
+
+const EDITABLE_CARD_KINDS: ReadonlyArray<{ kind: JournalEntryKind; labelKey: string }> = [
+  { kind: 'note', labelKey: 'journal.kindNote' },
+  { kind: 'thought', labelKey: 'journal.kindThought' },
+  { kind: 'moment', labelKey: 'journal.kindMoment' },
+]
 
 type JournalCardLayout = Pick<
   JournalDayLayoutItem,
@@ -66,6 +74,7 @@ export function JournalCard({
   const [editing, setEditing] = useState(false)
   const [draftBody, setDraftBody] = useState(entry.body)
   const [draftCategory, setDraftCategory] = useState<JournalCategory>(entry.category)
+  const [draftKind, setDraftKind] = useState<JournalEntryKind>(entry.kind)
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -115,6 +124,7 @@ export function JournalCard({
   const species = resolveEffectiveCardKind(entry)
   const colSpan = layout?.colSpan ?? classifyJournalCardSpan(entry, index)
   const presentation = layout?.presentation ?? 'default'
+  const extractedLinks = useMemo(() => extractJournalLinks(entry.body), [entry.body])
   const collapsePolicy = useMemo(
     () => resolveJournalBodyCollapsePolicy(entry, presentation),
     [entry, presentation],
@@ -137,12 +147,14 @@ export function JournalCard({
     'data-layout-placed': layout ? 'true' : undefined,
     'data-layout-row-span': layout && layout.rowSpan > 1 ? String(layout.rowSpan) : undefined,
     'data-compact-short': presentation === 'compact-thought' ? 'true' : undefined,
+    'data-auto-presentation': presentation !== 'default' ? presentation : undefined,
     style: layoutStyle,
   }
 
   const startEditing = () => {
     setDraftBody(entry.body)
     setDraftCategory(entry.category)
+    setDraftKind(entry.kind)
     setConfirmDelete(false)
     setEditing(true)
   }
@@ -154,10 +166,25 @@ export function JournalCard({
     const ok = await onUpdateEntry(entry.id, {
       body: draftBody,
       category: draftCategory,
+      ...(draftKind !== entry.kind ? { kind: draftKind } : {}),
     })
     setSaving(false)
     if (ok) {
       setEditing(false)
+    }
+  }
+
+  const handleOpenExternalLink = (url: string) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return
+      if (window.desktop?.openExternal) {
+        void window.desktop.openExternal(parsed.toString())
+      } else {
+        window.open(parsed.toString(), '_blank', 'noopener,noreferrer')
+      }
+    } catch {
+      /* ignore invalid URL */
     }
   }
 
@@ -440,6 +467,22 @@ export function JournalCard({
               </button>
             ))}
           </div>
+          {entry.kind === 'note' || entry.kind === 'thought' || entry.kind === 'moment' ? (
+            <div className="journal-card-edit-kinds" role="radiogroup" aria-label={t('journal.kindNote')}>
+              {EDITABLE_CARD_KINDS.filter((opt) => entry.images.length === 0 || opt.kind !== 'moment').map((opt) => (
+                <button
+                  key={opt.kind}
+                  type="button"
+                  role="radio"
+                  aria-checked={draftKind === opt.kind}
+                  className={`journal-kind-pill${draftKind === opt.kind ? ' is-selected' : ''}`}
+                  onClick={() => setDraftKind(opt.kind)}
+                >
+                  {t(opt.labelKey)}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <textarea
           autoFocus
@@ -471,6 +514,32 @@ export function JournalCard({
     )
   }
 
+  const renderLinkStrip = () => {
+    if (extractedLinks.links.length === 0) return null
+    return (
+      <div className="journal-link-strip">
+        {extractedLinks.links.map((link) => (
+          <button
+            key={link.url}
+            type="button"
+            className="journal-link-card"
+            title={link.url}
+            onClick={() => handleOpenExternalLink(link.url)}
+          >
+            <span className="journal-link-platform">{link.platform}</span>
+            <span className="journal-link-url">
+              {link.host}
+              {link.displayPath}
+            </span>
+            <span className="journal-link-arrow" aria-hidden="true">
+              ↗
+            </span>
+          </button>
+        ))}
+      </div>
+    )
+  }
+
   if (species === 'moment') {
     return (
       <article
@@ -488,6 +557,8 @@ export function JournalCard({
         ) : entry.momentTitle && entry.body ? (
           <div className="journal-moment-subtitle">{entry.body}</div>
         ) : null}
+        {renderLinkStrip()}
+        {renderImageGrid()}
         {renderMetaFooter()}
       </article>
     )
@@ -561,7 +632,30 @@ export function JournalCard({
     )
   }
 
+  if (presentation === 'auto-moment') {
+    return (
+      <article
+        className={`journal-card journal-card--moment journal-card--auto-moment journal-span-${colSpan}`}
+        {...layoutDataProps}
+      >
+        <div className="journal-card-head">
+          <div className="journal-card-head-left">
+            <span className="journal-card-time">{entry.time}</span>
+            {renderCategoryPill()}
+            {entry.source === 'feishu' ? (
+              <span className="journal-source-badge">{t('journal.sourceFeishu')}</span>
+            ) : null}
+          </div>
+          {renderHoverActions()}
+        </div>
+        <div className="journal-moment-title">{entry.body}</div>
+        {renderMetaFooter()}
+      </article>
+    )
+  }
+
   if (presentation === 'compact-thought') {
+    const compactBody = extractedLinks.links.length > 0 ? extractedLinks.displayBody : entry.body
     return (
       <article
         className={`journal-card journal-card--thought journal-card--compact-short journal-span-${colSpan}`}
@@ -577,43 +671,72 @@ export function JournalCard({
           </div>
           {renderHoverActions()}
         </div>
-        <div className="journal-card-body">{entry.body}</div>
+        {compactBody ? <div className="journal-card-body">{compactBody}</div> : null}
+        {renderLinkStrip()}
         {renderMetaFooter()}
       </article>
     )
   }
 
-  const renderCollapsibleBody = () => (
-    <>
-      <div
-        className={`journal-card-body${isBodyClamped ? ' journal-card-body--clamped' : ''}`}
-        style={
-          isBodyClamped
-            ? ({ '--j-clamp-lines': collapsePolicy.collapsedLines } as CSSProperties)
-            : undefined
-        }
-      >
-        {entry.body}
-      </div>
-      {collapsePolicy.collapsible ? (
-        <div className="journal-card-expand-row">
-          <button
-            type="button"
-            className="journal-card-expand-btn"
-            aria-expanded={bodyExpanded}
-            onClick={() => setBodyExpanded((prev) => !prev)}
-          >
-            {bodyExpanded ? t('journal.collapseBody') : t('journal.expandBody')}
-          </button>
+  const renderCollapsibleBody = (overrideText?: string) => {
+    const bodyText = overrideText !== undefined ? overrideText : entry.body
+    if (!bodyText.trim()) return null
+    return (
+      <>
+        <div
+          className={`journal-card-body${isBodyClamped ? ' journal-card-body--clamped' : ''}`}
+          style={
+            isBodyClamped
+              ? ({ '--j-clamp-lines': collapsePolicy.collapsedLines } as CSSProperties)
+              : undefined
+          }
+        >
+          {bodyText}
         </div>
-      ) : null}
-    </>
-  )
+        {collapsePolicy.collapsible ? (
+          <div className="journal-card-expand-row">
+            <button
+              type="button"
+              className="journal-card-expand-btn"
+              aria-expanded={bodyExpanded}
+              onClick={() => setBodyExpanded((prev) => !prev)}
+            >
+              {bodyExpanded ? t('journal.collapseBody') : t('journal.expandBody')}
+            </button>
+          </div>
+        ) : null}
+      </>
+    )
+  }
 
-  if (species === 'thought') {
+  if (presentation === 'link-bookmark') {
     return (
       <article
-        className={`journal-card journal-card--thought${entry.category === '未归类' ? ' is-uncategorized' : ''} journal-span-${colSpan}`}
+        className={`journal-card journal-card--note journal-card--link-bookmark journal-span-${colSpan}`}
+        {...layoutDataProps}
+      >
+        <div className="journal-card-head">
+          <div className="journal-card-head-left">
+            <span className="journal-card-time">{entry.time}</span>
+            {renderCategoryPill()}
+            {entry.source === 'feishu' ? (
+              <span className="journal-source-badge">{t('journal.sourceFeishu')}</span>
+            ) : null}
+          </div>
+          {renderHoverActions()}
+        </div>
+        {extractedLinks.displayBody ? renderCollapsibleBody(extractedLinks.displayBody) : null}
+        {renderLinkStrip()}
+        {renderMetaFooter()}
+      </article>
+    )
+  }
+
+  if (species === 'thought' || presentation === 'editorial-thought') {
+    const isEditorialAuto = presentation === 'editorial-thought' && species !== 'thought'
+    return (
+      <article
+        className={`journal-card journal-card--thought${isEditorialAuto ? ' journal-card--editorial-auto' : ''}${entry.category === '未归类' && !isEditorialAuto ? ' is-uncategorized' : ''} journal-span-${colSpan}`}
         {...layoutDataProps}
       >
         <div className="journal-card-head">
@@ -627,6 +750,7 @@ export function JournalCard({
           {renderHoverActions()}
         </div>
         {renderCollapsibleBody()}
+        {renderLinkStrip()}
         {renderImageGrid()}
         {renderMetaFooter()}
       </article>
@@ -649,6 +773,7 @@ export function JournalCard({
         {renderHoverActions()}
       </div>
       {renderCollapsibleBody()}
+      {renderLinkStrip()}
       {renderImageGrid()}
       {renderMetaFooter()}
     </article>

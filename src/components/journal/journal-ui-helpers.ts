@@ -292,10 +292,206 @@ export type JournalLayoutGroupKind =
   | 'quad-photo-right'
   | 'pair-photo-note'
   | 'pair-note-short'
+  | 'pair-editorial-duo'
   | 'ai-boundary'
   | 'single'
 
-export type JournalCardPresentation = 'default' | 'compact-thought'
+export type JournalCardPresentation =
+  | 'default'
+  | 'compact-thought'
+  | 'editorial-thought'
+  | 'auto-moment'
+  | 'link-bookmark'
+
+export type JournalExtractedLink = {
+  url: string
+  host: string
+  platform: string
+  displayPath: string
+}
+
+const MARKDOWN_LINK_RE = /\[([^\]]+)\]\((https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)/gi
+const URL_EXTRACT_RE = /https?:\/\/[^\s<>"{}|\\^`[\]）】》」，。；！？、]+/gi
+const TRAILING_URL_PUNCT_RE = /[.,;:!?'\"\]}。，；！？、）】》」]+$/
+const NUMBERED_LIST_RE = /(?:^|\n)\s*(?:\d+[.、)）]|[-*•])\s+/
+
+function stripUnbalancedTrailingParens(urlToken: string): string {
+  let out = urlToken
+  while (out.length > 0) {
+    const trimmedPunct = out.replace(TRAILING_URL_PUNCT_RE, '')
+    if (trimmedPunct !== out) {
+      out = trimmedPunct
+      continue
+    }
+    if (out.endsWith(')')) {
+      const opens = (out.match(/\(/g) ?? []).length
+      const closes = (out.match(/\)/g) ?? []).length
+      if (closes > opens) {
+        out = out.slice(0, -1)
+        continue
+      }
+    }
+    break
+  }
+  return out
+}
+
+function resolveLinkPlatform(host: string): string {
+  const h = host.toLowerCase().replace(/^www\./, '')
+  if (h === 'mp.weixin.qq.com' || h.endsWith('.weixin.qq.com')) return '微信公众号'
+  if (h === 'github.com' || h.endsWith('.github.com')) return 'GitHub'
+  if (
+    h === 'notion.so' ||
+    h.endsWith('.notion.so') ||
+    h.endsWith('.notion.site') ||
+    h === 'notion.com' ||
+    h.endsWith('.notion.com')
+  ) {
+    return 'Notion'
+  }
+  if (h.endsWith('.feishu.cn') || h === 'feishu.cn' || h.endsWith('.larkoffice.com')) return '飞书'
+  if (h === 'bilibili.com' || h.endsWith('.bilibili.com') || h === 'b23.tv') return 'B站'
+  if (h === 'youtube.com' || h.endsWith('.youtube.com') || h === 'youtu.be') return 'YouTube'
+  if (h === 'x.com' || h === 'twitter.com') return 'X'
+  if (h === 'zhihu.com' || h.endsWith('.zhihu.com')) return '知乎'
+  if (h === 'xiaohongshu.com' || h.endsWith('.xiaohongshu.com') || h === 'xhslink.com') return '小红书'
+  return h
+}
+
+function addExtractedUrl(
+  rawUrl: string,
+  links: JournalExtractedLink[],
+  seen: Set<string>,
+): boolean {
+  const cleaned = stripUnbalancedTrailingParens(rawUrl.replace(TRAILING_URL_PUNCT_RE, ''))
+  if (!cleaned) return false
+  try {
+    const parsed = new URL(cleaned)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+    const canonical = parsed.toString()
+    if (!seen.has(canonical)) {
+      seen.add(canonical)
+      const host = parsed.hostname.replace(/^www\./, '')
+      const pathPart = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : ''
+      const rawSuffix = `${pathPart}${parsed.search || ''}`
+      const displayPath = rawSuffix.length > 36 ? `${rawSuffix.slice(0, 35)}…` : rawSuffix
+      links.push({
+        url: canonical,
+        host,
+        platform: resolveLinkPlatform(host),
+        displayPath,
+      })
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Extracts deduplicated http(s) links with platform metadata and produces a cleaned
+ * `displayBody` with markdown links preserved as readable titles and bare URLs collapsed.
+ */
+export function extractJournalLinks(body: string): {
+  links: JournalExtractedLink[]
+  displayBody: string
+} {
+  const raw = String(body || '')
+  if (!raw || !/https?:\/\//i.test(raw)) {
+    return { links: [], displayBody: raw.trim() }
+  }
+
+  const links: JournalExtractedLink[] = []
+  const seen = new Set<string>()
+
+  // 1. Replace markdown links `[title](url)` with readable `title` while collecting `url`
+  let stripped = raw.replace(MARKDOWN_LINK_RE, (full, label: string, rawUrl: string) => {
+    return addExtractedUrl(rawUrl, links, seen) ? label : full
+  })
+
+  // 2. Collect remaining bare URLs while preserving balanced parens in URLs (e.g. Wikipedia)
+  const matches = stripped.match(URL_EXTRACT_RE) ?? []
+  for (const token of matches) {
+    const cleaned = stripUnbalancedTrailingParens(token.replace(TRAILING_URL_PUNCT_RE, ''))
+    if (!addExtractedUrl(cleaned, links, seen)) continue
+    const escapedCleaned = cleaned.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    // Handle parenthesized bare URL `(https://...)` cleanly without leaving orphan `(`
+    stripped = stripped.replace(new RegExp(`\\(${escapedCleaned}\\)[。，；、,;]*`), ' ')
+    stripped = stripped.replace(new RegExp(`${escapedCleaned}[。，；、,;]*`), ' ')
+  }
+
+  const displayBody = stripped
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^[ \t]*[，。；、:：]+[ \t]*/, '')
+    .trim()
+
+  return { links, displayBody }
+}
+
+function isBridgedNoteEntry(entry: JournalEntry): boolean {
+  return (
+    entry.kind === 'note' &&
+    entry.images.length === 0 &&
+    (entry.source === 'feishu' || entry.source === 'sentinellab-import')
+  )
+}
+
+function isAutoMomentCandidate(entry: JournalEntry): boolean {
+  if (!isBridgedNoteEntry(entry)) return false
+  if (entry.category !== '生活' && entry.category !== '身体') return false
+  const trimmed = entry.body.trim()
+  if (!trimmed || trimmed.length > 32) return false
+  if (countTextLines(trimmed) > 1) return false
+  if (NUMBERED_LIST_RE.test(trimmed)) return false
+  if (/https?:\/\//i.test(trimmed)) return false
+  return true
+}
+
+function isLinkBookmarkCandidate(entry: JournalEntry): boolean {
+  if (entry.images.length > 0) return false
+  // Only auto-morph `note` entries into link-bookmark cards; explicit `thought` cards keep borderless style with native link strips
+  if (entry.kind !== 'note') return false
+  const { links, displayBody } = extractJournalLinks(entry.body)
+  return links.length > 0 && displayBody.length <= 160
+}
+
+function isEditorialAutoThoughtCandidate(entry: JournalEntry): boolean {
+  if (!isBridgedNoteEntry(entry)) return false
+  if (isAutoMomentCandidate(entry) || isLinkBookmarkCandidate(entry)) return false
+  const trimmed = entry.body.trim()
+  if (!trimmed) return false
+  if (NUMBERED_LIST_RE.test(trimmed)) return false
+  return trimmed.length <= 95 && countTextLines(trimmed) <= 3
+}
+
+function resolveAutoPresentation(
+  entry: JournalEntry,
+  consecutiveBoxedCount: number,
+): JournalCardPresentation {
+  if (isLinkBookmarkCandidate(entry)) return 'link-bookmark'
+  if (isAutoMomentCandidate(entry)) return 'auto-moment'
+  if (isEditorialAutoThoughtCandidate(entry)) return 'editorial-thought'
+  if (isBridgedNoteEntry(entry) && consecutiveBoxedCount >= 2) {
+    return 'editorial-thought'
+  }
+  return 'default'
+}
+
+function isBoxedVisualPresentation(entry: JournalEntry, presentation: JournalCardPresentation): boolean {
+  const species = resolveEffectiveCardKind(entry)
+  if (species === 'thought' || species === 'moment' || species === 'ai' || species === 'photo') {
+    return false
+  }
+  return presentation === 'default' || presentation === 'link-bookmark'
+}
+
+function isEditorialDuoEligible(entry: JournalEntry): boolean {
+  if (entry.images.length > 0) return false
+  if (isAutoMomentCandidate(entry)) return false
+  const species = resolveEffectiveCardKind(entry)
+  return species === 'note' || species === 'thought'
+}
 
 export type JournalDayLayoutItem = {
   entry: JournalEntry
@@ -420,11 +616,20 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
   let i = 0
   let currentRow = 1
   let pendingRowCol = 1
+  let consecutiveBoxedCount = 0
 
   const flushPendingRow = () => {
     if (pendingRowCol > 1) {
       currentRow += 1
       pendingRowCol = 1
+    }
+  }
+
+  const updateBoxRun = (entry: JournalEntry, presentation: JournalCardPresentation) => {
+    if (isBoxedVisualPresentation(entry, presentation)) {
+      consecutiveBoxedCount += 1
+    } else {
+      consecutiveBoxedCount = 0
     }
   }
 
@@ -445,6 +650,7 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
         rowSpan: 1,
         presentation: 'default',
       })
+      consecutiveBoxedCount = 0
       currentRow += 1
       i += 1
       continue
@@ -457,6 +663,17 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
       const e1 = entries[i + 1]
       const e2 = entries[i + 2]
       const e3 = entries[i + 3]
+
+      const p2: JournalCardPresentation = isAutoMomentCandidate(e2)
+        ? 'auto-moment'
+        : canUseCompactThoughtStyle(e2)
+          ? 'compact-thought'
+          : 'default'
+      const p3: JournalCardPresentation = isAutoMomentCandidate(e3)
+        ? 'auto-moment'
+        : canUseCompactThoughtStyle(e3)
+          ? 'compact-thought'
+          : 'default'
 
       items.push(
         {
@@ -487,7 +704,7 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
           colSpan: 3,
           rowStart: currentRow + 1,
           rowSpan: 1,
-          presentation: canUseCompactThoughtStyle(e2) ? 'compact-thought' : 'default',
+          presentation: p2,
         },
         {
           entry: e3,
@@ -497,10 +714,11 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
           colSpan: 4,
           rowStart: currentRow + 1,
           rowSpan: 1,
-          presentation: canUseCompactThoughtStyle(e3) ? 'compact-thought' : 'default',
+          presentation: p3,
         },
       )
 
+      consecutiveBoxedCount = 0
       currentRow += 2
       i += 4
       continue
@@ -515,6 +733,16 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
         flushPendingRow()
         const firstSpan = isPhotoThenNote ? 5 : 7
         const secondSpan = isPhotoThenNote ? 7 : 5
+        const firstPres: JournalCardPresentation = isPhotoThenNote
+          ? 'default'
+          : isLinkBookmarkCandidate(current)
+            ? 'link-bookmark'
+            : 'default'
+        const secondPres: JournalCardPresentation = isPhotoThenNote
+          ? isLinkBookmarkCandidate(next)
+            ? 'link-bookmark'
+            : 'default'
+          : 'default'
         items.push(
           {
             entry: current,
@@ -524,7 +752,7 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
             colSpan: firstSpan,
             rowStart: currentRow,
             rowSpan: 1,
-            presentation: 'default',
+            presentation: firstPres,
           },
           {
             entry: next,
@@ -534,9 +762,10 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
             colSpan: secondSpan,
             rowStart: currentRow,
             rowSpan: 1,
-            presentation: 'default',
+            presentation: secondPres,
           },
         )
+        consecutiveBoxedCount = isPhotoThenNote ? 1 : 0
         currentRow += 1
         i += 2
         continue
@@ -549,6 +778,28 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
         flushPendingRow()
         const firstSpan = isNoteThenShort ? 8 : 4
         const secondSpan = isNoteThenShort ? 4 : 8
+        const firstPres: JournalCardPresentation = isShortThenNote
+          ? isAutoMomentCandidate(current)
+            ? 'auto-moment'
+            : canUseCompactThoughtStyle(current)
+              ? 'compact-thought'
+              : 'default'
+          : isLinkBookmarkCandidate(current)
+            ? 'link-bookmark'
+            : isBridgedNoteEntry(current) && consecutiveBoxedCount >= 2
+              ? 'editorial-thought'
+              : 'default'
+        const secondPres: JournalCardPresentation = isNoteThenShort
+          ? isAutoMomentCandidate(next)
+            ? 'auto-moment'
+            : canUseCompactThoughtStyle(next)
+              ? 'compact-thought'
+              : 'default'
+          : isLinkBookmarkCandidate(next)
+            ? 'link-bookmark'
+            : isBridgedNoteEntry(next) && consecutiveBoxedCount >= 2
+              ? 'editorial-thought'
+              : 'default'
         items.push(
           {
             entry: current,
@@ -558,8 +809,7 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
             colSpan: firstSpan,
             rowStart: currentRow,
             rowSpan: 1,
-            presentation:
-              isShortThenNote && canUseCompactThoughtStyle(current) ? 'compact-thought' : 'default',
+            presentation: firstPres,
           },
           {
             entry: next,
@@ -569,18 +819,121 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
             colSpan: secondSpan,
             rowStart: currentRow,
             rowSpan: 1,
-            presentation:
-              isNoteThenShort && canUseCompactThoughtStyle(next) ? 'compact-thought' : 'default',
+            presentation: secondPres,
           },
         )
+        updateBoxRun(current, firstPres)
+        updateBoxRun(next, secondPres)
         currentRow += 1
         i += 2
         continue
       }
+
+      // Priority 3.5: Consecutive text entries that would otherwise wrap into half-empty single rows ->
+      // pair cleanly into a 12-column editorial duo with contrasting paper/borderless rhythm.
+      if (isEditorialDuoEligible(current) && isEditorialDuoEligible(next)) {
+        const rawSpanA = classifyJournalCardSpan(current, i)
+        const rawSpanB = classifyJournalCardSpan(next, i + 1)
+        const hasBridged = isBridgedNoteEntry(current) || isBridgedNoteEntry(next)
+        const shouldPairDuo =
+          rawSpanA + rawSpanB > 12 ||
+          (isBridgedNoteEntry(current) && isBridgedNoteEntry(next)) ||
+          (hasBridged && rawSpanA + rawSpanB >= 10)
+
+        if (shouldPairDuo) {
+          flushPendingRow()
+          const lenA = current.body.trim().length
+          const lenB = next.body.trim().length
+          let firstSpan = 6
+          let secondSpan = 6
+          if (lenA > lenB * 1.45 && lenA >= 120) {
+            firstSpan = 7
+            secondSpan = 5
+          } else if (lenB > lenA * 1.45 && lenB >= 120) {
+            firstSpan = 5
+            secondSpan = 7
+          }
+
+          let presA = resolveAutoPresentation(current, consecutiveBoxedCount)
+          const boxesAfterA = isBoxedVisualPresentation(current, presA) ? consecutiveBoxedCount + 1 : 0
+          let presB = resolveAutoPresentation(next, boxesAfterA)
+
+          const aBoxed = isBoxedVisualPresentation(current, presA)
+          const bBoxed = isBoxedVisualPresentation(next, presB)
+          const aBridged = isBridgedNoteEntry(current)
+          const bBridged = isBridgedNoteEntry(next)
+
+          // Maintain paper-vs-editorial visual contrast inside every editorial duo:
+          // 1) Never place two visually boxed cards side-by-side when a non-bookmark bridged note can lighten.
+          // 2) Never place two visually borderless cards side-by-side when one is an auto-lightened bridged note
+          //    next to an explicit `thought` (or two substantial `editorial-thought`s).
+          if (aBoxed && bBoxed) {
+            const aCanLighten = aBridged && presA !== 'link-bookmark'
+            const bCanLighten = bBridged && presB !== 'link-bookmark'
+            if (aCanLighten && bCanLighten) {
+              if (lenA < lenB) {
+                presA = 'editorial-thought'
+              } else {
+                presB = 'editorial-thought'
+              }
+            } else if (bCanLighten) {
+              presB = 'editorial-thought'
+            } else if (aCanLighten) {
+              presA = 'editorial-thought'
+            }
+          } else if (!aBoxed && !bBoxed) {
+            if (presA === 'editorial-thought' && presB === 'editorial-thought') {
+              if (lenA >= lenB && lenA >= 80) {
+                presA = 'default'
+              } else if (lenB > lenA && lenB >= 80) {
+                presB = 'default'
+              }
+            } else if (presA === 'editorial-thought') {
+              presA = 'default'
+            } else if (presB === 'editorial-thought') {
+              presB = 'default'
+            }
+          }
+
+          items.push(
+            {
+              entry: current,
+              index: i,
+              groupKind: 'pair-editorial-duo',
+              colStart: 1,
+              colSpan: firstSpan,
+              rowStart: currentRow,
+              rowSpan: 1,
+              presentation: presA,
+            },
+            {
+              entry: next,
+              index: i + 1,
+              groupKind: 'pair-editorial-duo',
+              colStart: firstSpan + 1,
+              colSpan: secondSpan,
+              rowStart: currentRow,
+              rowSpan: 1,
+              presentation: presB,
+            },
+          )
+          updateBoxRun(current, presA)
+          updateBoxRun(next, presB)
+          currentRow += 1
+          i += 2
+          continue
+        }
+      }
     }
 
     // Priority 4: Remaining entries use existing single-card span rules in strict order (no dense backfill).
-    const span = classifyJournalCardSpan(current, i)
+    const presentation = resolveAutoPresentation(current, consecutiveBoxedCount)
+    const span =
+      presentation === 'auto-moment'
+        ? 4
+        : presentation === 'link-bookmark'
+          ? 6
+          : classifyJournalCardSpan(current, i)
     if (pendingRowCol + span - 1 > 12) {
       currentRow += 1
       pendingRowCol = 1
@@ -593,8 +946,9 @@ export function planJournalDayLayout(entries: readonly JournalEntry[]): JournalD
       colSpan: span,
       rowStart: currentRow,
       rowSpan: 1,
-      presentation: 'default',
+      presentation,
     })
+    updateBoxRun(current, presentation)
     pendingRowCol += span
     if (pendingRowCol > 12) {
       currentRow += 1
@@ -779,7 +1133,7 @@ export function resolveJournalBodyCollapsePolicy(
   entry: Pick<JournalEntry, 'kind' | 'body' | 'images'>,
   presentation: JournalCardPresentation = 'default',
 ): JournalBodyCollapsePolicy {
-  if (presentation === 'compact-thought') {
+  if (presentation === 'compact-thought' || presentation === 'auto-moment') {
     return { collapsible: false, collapsedLines: 0 }
   }
   const species = resolveEffectiveCardKind(entry)
@@ -789,6 +1143,21 @@ export function resolveJournalBodyCollapsePolicy(
   }
   const textLen = trimmed.length
   const lineCount = countTextLines(trimmed)
+
+  if (presentation === 'editorial-thought') {
+    if (textLen > 240 || lineCount > 7) {
+      return { collapsible: true, collapsedLines: 6 }
+    }
+    return { collapsible: false, collapsedLines: 0 }
+  }
+
+  if (presentation === 'link-bookmark') {
+    const { displayBody } = extractJournalLinks(trimmed)
+    if (displayBody.length > 220 || countTextLines(displayBody) > 6) {
+      return { collapsible: true, collapsedLines: 5 }
+    }
+    return { collapsible: false, collapsedLines: 0 }
+  }
 
   if (species === 'note') {
     if (textLen > NOTE_COLLAPSE_CHAR_THRESHOLD || lineCount > NOTE_COLLAPSE_LINE_THRESHOLD) {
