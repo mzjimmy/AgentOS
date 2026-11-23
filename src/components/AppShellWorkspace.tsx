@@ -41,6 +41,7 @@ import { ProjectFilePreviewOverlay, type ProjectFilePreviewOverlayState } from '
 const SettingsPage = lazy(async () => ({ default: (await import('./setting/SettingsPage')).SettingsPage }))
 const JournalPage = lazy(async () => ({ default: (await import('./journal/JournalPage')).JournalPage }))
 const IntentTodoPage = lazy(async () => ({ default: (await import('./intent-todo/IntentTodoPage')).IntentTodoPage }))
+const QuickCommandsPage = lazy(async () => ({ default: (await import('./quick-commands/QuickCommandsPage')).QuickCommandsPage }))
 import type { JournalDiscussTarget, JournalEntry } from '../journal-contract'
 import { useWorkspaceAgentMode } from './useWorkspaceAgentMode'
 import type { AgentModeSettingsResult, HomePluginRunItem } from '../desktop-types'
@@ -226,7 +227,7 @@ export function AppShellWorkspace({
   const { t } = useI18n()
   const runtimeDevelopmentUi = runtimeDevelopmentStatus(t, runtimeDevelopment)
   const isSettingsChromeHidden = activeViewId === 'settings'
-  const isDeskView = activeViewId === 'journal' || activeViewId === 'intent-todo'
+  const isDeskView = activeViewId === 'journal' || activeViewId === 'intent-todo' || activeViewId === 'quick-commands'
   const [sidePanel, setSidePanel] = useState<SidePanelState>(() => ({ open: false, tab: 'files' }))
   const [filePreview, setFilePreview] = useState<ProjectFilePreviewOverlayState | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -701,6 +702,11 @@ export function AppShellWorkspace({
                 onNavigateToJournalAnchor={onNavigateToJournalAnchor}
                 onOpenModelSettings={onOpenModelSettings}
               />
+            </Suspense>
+          ) : null}
+          {!isRuntimeActive && activeViewId === 'quick-commands' ? (
+            <Suspense fallback={null}>
+              <QuickCommandsPage hidden={false} activeProject={activeProject} />
             </Suspense>
           ) : null}
           {!isRuntimeActive ? <DocsPage hidden={activeViewId !== 'docs'} /> : null}

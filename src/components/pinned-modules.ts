@@ -26,6 +26,12 @@ export const PINNED_MODULES: readonly PinnedModuleDefinition[] = [
     icon: 'checklist',
     hash: '#intent-todo',
   },
+  {
+    id: 'quick-commands',
+    labelKey: 'sidebar.pinnedQuickCommands',
+    icon: 'code',
+    hash: '#quick-commands',
+  },
 ] as const
 
 export function resolvePinnedModuleByViewId(viewId: string): PinnedModuleDefinition | undefined {
