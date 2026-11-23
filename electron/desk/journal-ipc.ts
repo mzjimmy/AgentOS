@@ -14,21 +14,41 @@ import type { JournalStore } from './journal-store'
 
 export function registerJournalIpc(
   ipcMain: IpcMain,
-  store: JournalStore,
+  storeOrGetter: JournalStore | (() => JournalStore),
   _getMainWindow?: () => BrowserWindow | null
 ): () => void {
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalConfig, () => store.getConfig())
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.setJournalDeskRoot, (_event, deskRoot: string) => store.setDeskRoot(deskRoot))
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.listJournalDays, (_event, month?: string) => store.listDays(month))
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalDay, (_event, date: string) => store.getDay(date))
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalWeek, (_event, anchorDate: string) => store.getWeek(anchorDate))
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.createJournalEntry, (_event, input: CreateJournalEntryInput) => store.createEntry(input))
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.updateJournalEntry, (_event, date: string, entryId: string, patch: UpdateJournalEntryInput) => store.updateEntry(date, entryId, patch))
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.deleteJournalEntry, (_event, date: string, entryId: string) => store.deleteEntry(date, entryId))
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.readJournalAttachment, (_event, relativePath: string) => store.readAttachment(relativePath))
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.syncLegacySentinelLabJournal, (_event, options?: LegacyJournalSyncOptions) => syncLegacySentinelLabJournal(store, options))
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.watchJournal, () => store.watch())
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.unwatchJournal, () => store.unwatch())
+  const resolveStore = typeof storeOrGetter === 'function' ? storeOrGetter : () => storeOrGetter
+
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalConfig, () => resolveStore().getConfig())
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.setJournalDeskRoot, (_event, deskRoot: unknown) =>
+    resolveStore().setDeskRoot(String(deskRoot)),
+  )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.listJournalDays, (_event, month?: unknown) =>
+    resolveStore().listDays(typeof month === 'string' ? month : undefined),
+  )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalDay, (_event, date: unknown) =>
+    resolveStore().getDay(String(date)),
+  )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalWeek, (_event, anchorDate: unknown) =>
+    resolveStore().getWeek(String(anchorDate)),
+  )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.createJournalEntry, (_event, input: unknown) =>
+    resolveStore().createEntry(input as CreateJournalEntryInput),
+  )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.updateJournalEntry, (_event, date: unknown, entryId: unknown, patch: unknown) =>
+    resolveStore().updateEntry(String(date), String(entryId), patch as UpdateJournalEntryInput),
+  )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.deleteJournalEntry, (_event, date: unknown, entryId: unknown) =>
+    resolveStore().deleteEntry(String(date), String(entryId)),
+  )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.readJournalAttachment, (_event, relativePath: unknown) =>
+    resolveStore().readAttachment(String(relativePath)),
+  )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.syncLegacySentinelLabJournal, (_event, options?: unknown) =>
+    syncLegacySentinelLabJournal(resolveStore(), options as LegacyJournalSyncOptions),
+  )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.watchJournal, () => resolveStore().watch())
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.unwatchJournal, () => resolveStore().unwatch())
 
   return () => {
     ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.getJournalConfig)

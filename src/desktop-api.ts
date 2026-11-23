@@ -63,6 +63,16 @@ import type {
   IntentTodoRefreshResult,
 } from './intent-todo-contract'
 import type {
+  LanguagePushActionResult,
+  LanguagePushChangedEvent,
+  LanguagePushConfig,
+  LanguagePushDecisionAction,
+  LanguagePushOverview,
+  LanguagePushRunResult,
+  LanguagePushSpeakInput,
+  LanguagePushSpeakResult,
+} from './language-push-contract'
+import type {
   AgentModeFilesResult,
   AgentMcpGlobalSettings,
   AgentMcpGlobalSettingsResult,
@@ -417,6 +427,13 @@ export type DesktopAPI = {
   getIntentTodoConfig?: () => Promise<IntentTodoConfig>
   saveIntentTodoConfig?: (patch: Partial<IntentTodoConfig>) => Promise<IntentTodoConfig>
   onIntentTodoChanged?: (listener: (event: IntentTodoChangedEvent) => void) => () => void
+  getLanguagePushOverview?: () => Promise<LanguagePushOverview>
+  runLanguagePush?: (options?: { date?: string; force?: boolean }) => Promise<LanguagePushRunResult>
+  decideLanguagePushCard?: (cardId: string, action: LanguagePushDecisionAction) => Promise<LanguagePushActionResult>
+  getLanguagePushConfig?: () => Promise<LanguagePushConfig>
+  saveLanguagePushConfig?: (patch: Partial<LanguagePushConfig>) => Promise<LanguagePushConfig>
+  speakLanguagePush?: (input: LanguagePushSpeakInput) => Promise<LanguagePushSpeakResult>
+  onLanguagePushChanged?: (listener: (event: LanguagePushChangedEvent) => void) => () => void
 }
 
 export type {
@@ -452,4 +469,14 @@ export type {
   IntentTodoOverview,
   IntentTodoRefreshResult,
 } from './intent-todo-contract'
+export type {
+  LanguagePushActionResult,
+  LanguagePushChangedEvent,
+  LanguagePushConfig,
+  LanguagePushDecisionAction,
+  LanguagePushOverview,
+  LanguagePushRunResult,
+  LanguagePushSpeakInput,
+  LanguagePushSpeakResult,
+} from './language-push-contract'
 

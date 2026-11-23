@@ -1,0 +1,564 @@
+/* SentinelDesk Language Push (外语学习推送板块) — 纸 · 墨 · 黛 极简互动卡片样式，全部 lp- 前缀隔离 */
+
+.lp-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--j-canvas);
+  color: var(--j-ink-1);
+}
+
+.lp-header {
+  flex-shrink: 0;
+  padding: 22px 28px 14px;
+  border-bottom: 1px solid var(--j-line);
+  background: var(--j-canvas);
+}
+
+.lp-header-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.lp-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--j-ink-1);
+}
+
+.lp-lead {
+  margin: 5px 0 0;
+  font-size: 13px;
+  color: var(--j-ink-3);
+}
+
+.lp-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lp-stats-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+
+.lp-stat-pill {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+  white-space: nowrap;
+}
+
+.lp-stat-muted {
+  background: var(--j-sunken);
+  color: var(--j-ink-2);
+}
+
+.lp-banner {
+  max-width: 1120px;
+  margin: 12px auto 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lp-banner-warn {
+  background: var(--j-amber-soft);
+  color: var(--j-amber);
+}
+
+.lp-banner-error {
+  background: var(--j-cinnabar-soft);
+  color: var(--j-cinnabar);
+}
+
+.lp-settings-drawer {
+  max-width: 1120px;
+  margin: 14px auto 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--j-surface);
+  border: 1px solid var(--j-line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lp-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lp-setting-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--j-ink-2);
+}
+
+.lp-setting-pills,
+.lp-setting-selects,
+.lp-setting-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--j-ink-3);
+}
+
+.lp-inline-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--j-ink-2);
+}
+
+.lp-inline-select select {
+  padding: 4px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-canvas);
+  color: var(--j-ink-1);
+  font-size: 12px;
+}
+
+.lp-toolbar {
+  flex-shrink: 0;
+  padding: 10px 28px;
+  border-bottom: 1px solid var(--j-line);
+  background: var(--j-canvas);
+}
+
+.lp-toolbar-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lp-tabs,
+.lp-lang-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lp-pill {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--j-ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.lp-pill:hover {
+  background: var(--j-sunken);
+  color: var(--j-ink-1);
+}
+
+.lp-pill-active {
+  background: var(--j-surface);
+  color: var(--j-ink-1);
+  border-color: var(--j-line-strong);
+  box-shadow: 0 1px 2px rgba(35, 34, 31, 0.05);
+}
+
+.lp-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 28px 36px;
+}
+
+.lp-board {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.lp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.lp-card {
+  background: var(--j-surface);
+  border: 1px solid var(--j-line);
+  border-radius: 14px;
+  padding: 18px 20px 16px;
+  box-shadow: var(--j-shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.lp-card:hover {
+  border-color: var(--j-line-strong);
+}
+
+.lp-card-pinned {
+  border-color: color-mix(in srgb, var(--j-amber) 45%, var(--j-line));
+}
+
+.lp-card-mastered {
+  opacity: 0.84;
+}
+
+.lp-card-playing {
+  border-color: var(--j-dai);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--j-dai) 28%, transparent), var(--j-shadow-card);
+}
+
+.lp-btn-playing {
+  background: var(--j-dai-soft);
+  border-color: var(--j-dai);
+  color: var(--j-dai);
+}
+
+.lp-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lp-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+}
+
+.lp-chip-lang-en {
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+}
+
+.lp-chip-lang-ja {
+  background: var(--j-amber-soft);
+  color: var(--j-amber);
+}
+
+.lp-chip-kind-vocab {
+  background: var(--j-sunken);
+  color: var(--j-ink-2);
+}
+
+.lp-chip-kind-grammar {
+  background: var(--j-pine-soft);
+  color: var(--j-pine);
+}
+
+.lp-chip-level {
+  background: transparent;
+  border: 1px solid var(--j-line-strong);
+  color: var(--j-ink-3);
+}
+
+.lp-pin-mark {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--j-amber);
+}
+
+.lp-meta {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--j-ink-3);
+}
+
+.lp-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lp-hero-copy {
+  min-width: 0;
+}
+
+.lp-surface {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+  color: var(--j-ink-1);
+  word-break: break-word;
+}
+
+.lp-reading {
+  margin: 4px 0 0;
+  font-family: var(--j-font-mono);
+  font-size: 12.5px;
+  color: var(--j-ink-3);
+}
+
+.lp-speak-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-canvas);
+  color: var(--j-ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.lp-speak-btn:hover,
+.lp-speak-btn-active {
+  border-color: var(--j-dai);
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
+}
+
+.lp-meaning {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 550;
+  line-height: 1.45;
+  color: var(--j-ink-1);
+}
+
+.lp-note {
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: var(--j-pine-soft);
+  border-left: 3px solid var(--j-pine);
+}
+
+.lp-note-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--j-pine);
+  margin-bottom: 3px;
+}
+
+.lp-note-text {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--j-ink-1);
+}
+
+.lp-example-box {
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: var(--j-sunken);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lp-example-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lp-example-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--j-ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lp-example-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lp-example-sentence {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--j-ink-1);
+}
+
+.lp-example-gloss {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--j-ink-3);
+}
+
+.lp-mini-btn,
+.lp-anchor-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--j-ink-3);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.lp-mini-btn:hover,
+.lp-mini-btn-active,
+.lp-anchor-btn:hover {
+  background: var(--j-surface);
+  color: var(--j-dai);
+}
+
+.lp-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--j-line);
+  flex-wrap: wrap;
+}
+
+.lp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-surface);
+  color: var(--j-ink-1);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.lp-btn:hover:not(:disabled) {
+  background: var(--j-sunken);
+}
+
+.lp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.lp-btn-primary {
+  background: var(--j-dai);
+  border-color: var(--j-dai);
+  color: #fff;
+}
+
+.lp-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  background: var(--j-dai);
+}
+
+.lp-btn-master {
+  background: var(--j-pine-soft);
+  border-color: color-mix(in srgb, var(--j-pine) 35%, transparent);
+  color: var(--j-pine);
+}
+
+.lp-btn-master:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--j-pine) 18%, var(--j-surface));
+}
+
+.lp-btn-pinned {
+  background: var(--j-amber-soft);
+  border-color: color-mix(in srgb, var(--j-amber) 40%, transparent);
+  color: var(--j-amber);
+}
+
+.lp-btn-later {
+  margin-left: auto;
+  color: var(--j-ink-2);
+}
+
+.lp-empty {
+  max-width: 460px;
+  margin: 56px auto;
+  text-align: center;
+  padding: 28px 24px;
+  border-radius: 16px;
+  background: var(--j-surface);
+  border: 1px solid var(--j-line);
+}
+
+.lp-empty-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--j-ink-1);
+}
+
+.lp-empty-body {
+  margin: 0 0 18px;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--j-ink-3);
+}
+
+.lp-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  box-shadow: var(--j-shadow-composer);
+  font-size: 13px;
+}
+
+.lp-toast-ok {
+  background: var(--j-ink-1);
+  color: var(--j-surface);
+}
+
+.lp-toast-error {
+  background: var(--j-cinnabar);
+  color: #fff;
+}
+
+.lp-toast-text {
+  margin: 0;
+}

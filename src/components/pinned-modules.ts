@@ -32,6 +32,12 @@ export const PINNED_MODULES: readonly PinnedModuleDefinition[] = [
     icon: 'code',
     hash: '#quick-commands',
   },
+  {
+    id: 'language-push',
+    labelKey: 'sidebar.pinnedLanguagePush',
+    icon: 'languages',
+    hash: '#language-push',
+  },
 ] as const
 
 export function resolvePinnedModuleByViewId(viewId: string): PinnedModuleDefinition | undefined {

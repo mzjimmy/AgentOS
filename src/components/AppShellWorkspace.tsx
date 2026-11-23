@@ -42,6 +42,7 @@ const SettingsPage = lazy(async () => ({ default: (await import('./setting/Setti
 const JournalPage = lazy(async () => ({ default: (await import('./journal/JournalPage')).JournalPage }))
 const IntentTodoPage = lazy(async () => ({ default: (await import('./intent-todo/IntentTodoPage')).IntentTodoPage }))
 const QuickCommandsPage = lazy(async () => ({ default: (await import('./quick-commands/QuickCommandsPage')).QuickCommandsPage }))
+const LanguagePushPage = lazy(async () => ({ default: (await import('./language-push/LanguagePushPage')).LanguagePushPage }))
 import type { JournalDiscussTarget, JournalEntry } from '../journal-contract'
 import { useWorkspaceAgentMode } from './useWorkspaceAgentMode'
 import type { AgentModeSettingsResult, HomePluginRunItem } from '../desktop-types'
@@ -227,7 +228,7 @@ export function AppShellWorkspace({
   const { t } = useI18n()
   const runtimeDevelopmentUi = runtimeDevelopmentStatus(t, runtimeDevelopment)
   const isSettingsChromeHidden = activeViewId === 'settings'
-  const isDeskView = activeViewId === 'journal' || activeViewId === 'intent-todo' || activeViewId === 'quick-commands'
+  const isDeskView = activeViewId === 'journal' || activeViewId === 'intent-todo' || activeViewId === 'quick-commands' || activeViewId === 'language-push'
   const [sidePanel, setSidePanel] = useState<SidePanelState>(() => ({ open: false, tab: 'files' }))
   const [filePreview, setFilePreview] = useState<ProjectFilePreviewOverlayState | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -707,6 +708,15 @@ export function AppShellWorkspace({
           {!isRuntimeActive && activeViewId === 'quick-commands' ? (
             <Suspense fallback={null}>
               <QuickCommandsPage hidden={false} activeProject={activeProject} />
+            </Suspense>
+          ) : null}
+          {!isRuntimeActive && activeViewId === 'language-push' ? (
+            <Suspense fallback={null}>
+              <LanguagePushPage
+                hidden={false}
+                onNavigateToJournalAnchor={onNavigateToJournalAnchor}
+                onOpenModelSettings={onOpenModelSettings}
+              />
             </Suspense>
           ) : null}
           {!isRuntimeActive ? <DocsPage hidden={activeViewId !== 'docs'} /> : null}

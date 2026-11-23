@@ -155,6 +155,12 @@ export const DESKTOP_INVOKE_CHANNELS = {
   dispatchIntentTodo: 'desktop:intent-todo:dispatch',
   getIntentTodoConfig: 'desktop:intent-todo:get-config',
   saveIntentTodoConfig: 'desktop:intent-todo:save-config',
+  getLanguagePushOverview: 'desktop:language-push:get-overview',
+  runLanguagePush: 'desktop:language-push:run',
+  decideLanguagePushCard: 'desktop:language-push:decide',
+  getLanguagePushConfig: 'desktop:language-push:get-config',
+  saveLanguagePushConfig: 'desktop:language-push:save-config',
+  speakLanguagePush: 'desktop:language-push:speak',
 } as const satisfies Record<DesktopInvokeCapability, string>
 
 export const DESKTOP_EVENT_CHANNELS = {
@@ -171,6 +177,7 @@ export const DESKTOP_EVENT_CHANNELS = {
   onFeishuJournalBridgeStatus: 'desktop:journal:feishu-status-changed',
   onJournalAutoTagChanged: 'desktop:journal:auto-tag-changed',
   onIntentTodoChanged: 'desktop:intent-todo-changed',
+  onLanguagePushChanged: 'desktop:language-push-changed',
 } as const satisfies Record<DesktopEventCapability, string>
 
 export const DESKTOP_SEAM_CAPABILITIES = [

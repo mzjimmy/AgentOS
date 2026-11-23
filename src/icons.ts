@@ -104,6 +104,8 @@ export const Icons = {
     '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="12" rx="2"/><path stroke-linecap="round" d="M8.5 20h7M12 16.5V20"/></svg>',
   archive:
     '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="4" rx="1"/><path stroke-linecap="round" stroke-linejoin="round" d="M5 8.5v9.5a1.75 1.75 0 001.75 1.75h10.5A1.75 1.75 0 0019 18V8.5M10 12.5h4"/></svg>',
+  languages:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h10M9 4v2m-3.5 0c.5 4.2 3 7.5 6.5 9.2M12.5 6c-.8 3.8-3.4 7-7.5 9.2M13.5 19l3.25-8.5L20 19M14.7 16.2h4.1"/></svg>',
 } as const
 
 /** Icons 对象的联合键 / Keys available on Icons map */

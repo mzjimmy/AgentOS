@@ -41,8 +41,10 @@ import { ProjectChatWindowManager } from './project-chat-window-manager'
 import { JournalStore } from './desk/journal-store'
 import { FeishuJournalBridgeService } from './desk/feishu-journal-bridge'
 import { JournalAutoTagService } from './desk/journal-auto-tag-service'
-import { syncLegacySentinelLabJournal } from './desk/legacy-sync'
+import { registerJournalIpc } from './desk/journal-ipc'
 import { IntentTodoService } from './desk/intent-todo-service'
+import { LanguagePushService } from './desk/language-push-service'
+import { registerLanguagePushIpc } from './desk/language-push-ipc'
 import { ProjectChatViewStateStore } from './project-chat-view-state-store'
 import { RuntimePreviewLayoutStore } from './runtime-preview-layout-store'
 import { AgentOSDeepLinkQueue, parseAgentOSDeepLink } from './agentos-deep-link'
@@ -216,6 +218,7 @@ let runtimeEditRuntimeBridge: RuntimeEditRuntimeBridge | null = null
 let journalStore: JournalStore | null = null
 let feishuJournalBridge: FeishuJournalBridgeService | null = null
 let intentTodoService: IntentTodoService | null = null
+let languagePushService: LanguagePushService | null = null
 let journalAutoTagService: JournalAutoTagService | null = null
 let journalAutoTagDebounceTimer: NodeJS.Timeout | null = null
 const journalAutoTagPendingDates = new Set<string>()
@@ -318,6 +321,24 @@ function getIntentTodoService(): IntentTodoService {
     })
   }
   return intentTodoService
+}
+
+function getLanguagePushService(): LanguagePushService {
+  if (!languagePushService) {
+    languagePushService = new LanguagePushService({
+      journalStore: getJournalStore(),
+      settingsStore: getClaudeAgentSettingsStore(),
+      isOnline: () => net.isOnline(),
+      onChanged: (event) => {
+        for (const windowItem of BrowserWindow.getAllWindows()) {
+          if (!windowItem.isDestroyed()) {
+            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onLanguagePushChanged, event)
+          }
+        }
+      },
+    })
+  }
+  return languagePushService
 }
 let projectRuntimePlacementTracker: ProjectRuntimePlacementTracker | null = null
 let localAppTrustStore: LocalAppTrustStore | null = null
@@ -1444,6 +1465,7 @@ async function prepareForAppQuit(): Promise<void> {
     ])
     feishuJournalBridge?.dispose()
     intentTodoService?.dispose()
+    languagePushService?.dispose()
     if (journalAutoTagDebounceTimer) {
       clearTimeout(journalAutoTagDebounceTimer)
       journalAutoTagDebounceTimer = null
@@ -2892,18 +2914,8 @@ if (gotSingleInstanceLock) {
       if (typeof rawUrl !== 'string' || !isExternalHttpUrl(rawUrl)) return
       await shell.openExternal(rawUrl)
     })
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalConfig, () => getJournalStore().getConfig())
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.setJournalDeskRoot, (_event, deskRoot: unknown) => getJournalStore().setDeskRoot(String(deskRoot)))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.listJournalDays, (_event, month?: unknown) => getJournalStore().listDays(typeof month === 'string' ? month : undefined))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalDay, (_event, date: unknown) => getJournalStore().getDay(String(date)))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalWeek, (_event, anchorDate: unknown) => getJournalStore().getWeek(String(anchorDate)))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.createJournalEntry, (_event, input: unknown) => getJournalStore().createEntry(input as any))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.updateJournalEntry, (_event, date: unknown, entryId: unknown, patch: unknown) => getJournalStore().updateEntry(String(date), String(entryId), patch as any))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.deleteJournalEntry, (_event, date: unknown, entryId: unknown) => getJournalStore().deleteEntry(String(date), String(entryId)))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.readJournalAttachment, (_event, relativePath: unknown) => getJournalStore().readAttachment(String(relativePath)))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.syncLegacySentinelLabJournal, (_event, options?: unknown) => syncLegacySentinelLabJournal(getJournalStore(), options as any))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.watchJournal, () => getJournalStore().watch())
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.unwatchJournal, () => getJournalStore().unwatch())
+    registerJournalIpc(ipcMain, getJournalStore)
+    registerLanguagePushIpc(ipcMain, getLanguagePushService)
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getFeishuJournalBridgeStatus, () => getFeishuJournalBridge().getStatus())
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveFeishuJournalBridgeConfig, (_event, update: unknown) => getFeishuJournalBridge().updateConfig((update ?? {}) as any))
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.reconnectFeishuJournalBridge, () => getFeishuJournalBridge().reconnect())
@@ -2943,16 +2955,19 @@ if (gotSingleInstanceLock) {
     void getFeishuJournalBridge().startIfEnabled().catch(() => undefined)
     initializeAgentOSExternalTasks()
     getIntentTodoService().start()
+    getLanguagePushService().start()
     // Catch up on today's journal a few seconds after boot.
     setTimeout(() => {
       void getJournalAutoTagService().runAutoTag().catch(() => undefined)
     }, 5_000)
     powerMonitor.on('resume', () => {
       intentTodoService?.notifySystemResumeOrFocus()
+      languagePushService?.notifySystemResumeOrFocus()
       void getJournalAutoTagService().runAutoTag().catch(() => undefined)
     })
     app.on('browser-window-focus', () => {
       intentTodoService?.notifySystemResumeOrFocus()
+      languagePushService?.notifySystemResumeOrFocus()
     })
     ensureTray()
     appUpdaterService.scheduleUpdateChecks()

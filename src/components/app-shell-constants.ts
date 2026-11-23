@@ -65,6 +65,7 @@ export const VIEW_HEADING_KEYS: Record<Exclude<AppViewId, 'settings'>, string> =
   journal: 'shell.viewJournal',
   'intent-todo': 'shell.viewIntentTodo',
   'quick-commands': 'shell.viewQuickCommands',
+  'language-push': 'shell.viewLanguagePush',
   home: 'shell.viewHome',
   docs: 'shell.viewDocs',
 }
@@ -93,7 +94,7 @@ export const NAV_VIEW_IDS = ['home', 'docs'] as const
 /** 将任意 hash 头部规范为主视图 / Normalize hash head to primary AppViewId */
 export function normalizeViewId(value: string): AppViewId {
   const head = value.split('/')[0] ?? ''
-  if (head === 'home' || head === 'docs' || head === 'settings' || head === 'journal' || head === 'intent-todo' || head === 'quick-commands') {
+  if (head === 'home' || head === 'docs' || head === 'settings' || head === 'journal' || head === 'intent-todo' || head === 'quick-commands' || head === 'language-push') {
     return head
   }
   return 'journal'

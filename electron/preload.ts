@@ -58,6 +58,16 @@ import type {
   IntentTodoRefreshResult,
 } from '../src/intent-todo-contract'
 import type {
+  LanguagePushActionResult,
+  LanguagePushChangedEvent,
+  LanguagePushConfig,
+  LanguagePushDecisionAction,
+  LanguagePushOverview,
+  LanguagePushRunResult,
+  LanguagePushSpeakInput,
+  LanguagePushSpeakResult,
+} from '../src/language-push-contract'
+import type {
   ActiveChatPickPayload,
   ClaudeAgentSettings,
   ClaudeAgentStatusRequest,
@@ -602,6 +612,29 @@ const desktopAdapter = {
     const listener = (_event: IpcRendererEvent, event: IntentTodoChangedEvent) => handler(event)
     ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onIntentTodoChanged, listener)
     return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onIntentTodoChanged, listener)
+  },
+  getLanguagePushOverview() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getLanguagePushOverview) as Promise<LanguagePushOverview>
+  },
+  runLanguagePush(options?: { date?: string; force?: boolean }) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.runLanguagePush, options) as Promise<LanguagePushRunResult>
+  },
+  decideLanguagePushCard(cardId: string, action: LanguagePushDecisionAction) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.decideLanguagePushCard, cardId, action) as Promise<LanguagePushActionResult>
+  },
+  getLanguagePushConfig() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getLanguagePushConfig) as Promise<LanguagePushConfig>
+  },
+  saveLanguagePushConfig(patch: Partial<LanguagePushConfig>) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.saveLanguagePushConfig, patch) as Promise<LanguagePushConfig>
+  },
+  speakLanguagePush(input: LanguagePushSpeakInput) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.speakLanguagePush, input) as Promise<LanguagePushSpeakResult>
+  },
+  onLanguagePushChanged(handler: (event: LanguagePushChangedEvent) => void) {
+    const listener = (_event: IpcRendererEvent, event: LanguagePushChangedEvent) => handler(event)
+    ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onLanguagePushChanged, listener)
+    return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onLanguagePushChanged, listener)
   },
 } satisfies DesktopAPI
 
