@@ -547,3 +547,95 @@ test('AppShellWorkspace lazy-renders quick commands as a desk view', () => {
   assert.match(source, /activeViewId === 'quick-commands'/)
   assert.match(source, /<QuickCommandsPage/)
 })
+
+test('quick command target options, header persistence, and priority resolution work end-to-end', () => {
+  const {
+    buildQuickCommandTargetOptions,
+    createQuickCommand,
+    loadQuickCommands,
+    loadQuickCommandsHeaderTarget,
+    parseQuickCommandTargetKey,
+    resolveEffectiveQuickCommandTarget,
+    saveQuickCommands,
+    saveQuickCommandsHeaderTarget,
+    serializeQuickCommandTargetKey,
+    updateQuickCommand,
+  } = loadQuickCommandsModule()
+
+  const projects = [
+    { id: 'p_desk', name: 'SentinelDesk', path: '/Users/demo/VibeCoding/SentinelDesk/' },
+    { id: 'p_macosui', name: 'macosui', path: '/Users/demo/macosui' },
+    { id: 'p_agentos', name: 'AgentOS', path: '/Users/demo/AgentOS' },
+    { id: 'p_gone', name: 'GoneRepo', path: '/Users/demo/gone', pathMissing: true },
+  ]
+
+  const options = buildQuickCommandTargetOptions(projects, {
+    deskRoot: '/Users/demo/VibeCoding/SentinelDesk',
+    deskLabel: 'SentinelDesk（工作台）',
+  })
+  assert.deepEqual(
+    options.map((o) => [o.key, o.label]),
+    [
+      ['desk', 'SentinelDesk（工作台）'],
+      ['project:p_macosui', 'macosui'],
+      ['project:p_agentos', 'AgentOS'],
+    ],
+  )
+
+  // Command defaultTarget > headerTarget > activeProject > desk
+  const resolvedCommandDesk = resolveEffectiveQuickCommandTarget({
+    itemTarget: { kind: 'desk' },
+    headerTarget: { kind: 'project', projectId: 'p_macosui' },
+    activeProject: projects[1],
+    projects,
+    deskRoot: '/Users/demo/VibeCoding/SentinelDesk',
+  })
+  assert.equal(resolvedCommandDesk.source, 'command')
+  assert.deepEqual(resolvedCommandDesk.target, { kind: 'desk' })
+
+  const resolvedHeader = resolveEffectiveQuickCommandTarget({
+    itemTarget: null,
+    headerTarget: { kind: 'project', projectId: 'p_agentos' },
+    activeProject: projects[1],
+    projects,
+    deskRoot: '/Users/demo/VibeCoding/SentinelDesk',
+  })
+  assert.equal(resolvedHeader.source, 'header')
+  assert.deepEqual(resolvedHeader.target, { kind: 'project', projectId: 'p_agentos' })
+
+  // Stale/missing project defaultTarget falls back to headerTarget
+  const resolvedStaleFallback = resolveEffectiveQuickCommandTarget({
+    itemTarget: { kind: 'project', projectId: 'p_gone' },
+    headerTarget: { kind: 'project', projectId: 'p_agentos' },
+    activeProject: projects[1],
+    projects,
+    deskRoot: '/Users/demo/VibeCoding/SentinelDesk',
+  })
+  assert.equal(resolvedStaleFallback.source, 'header')
+  assert.deepEqual(resolvedStaleFallback.target, { kind: 'project', projectId: 'p_agentos' })
+
+  // Header target storage roundtrip
+  const storage = memoryStorage()
+  assert.equal(loadQuickCommandsHeaderTarget(storage), null)
+  assert.equal(saveQuickCommandsHeaderTarget(storage, { kind: 'project', projectId: 'p_agentos' }), true)
+  assert.deepEqual(loadQuickCommandsHeaderTarget(storage), { kind: 'project', projectId: 'p_agentos' })
+  assert.equal(serializeQuickCommandTargetKey({ kind: 'desk' }), 'desk')
+  assert.deepEqual(parseQuickCommandTargetKey('project:p_agentos'), { kind: 'project', projectId: 'p_agentos' })
+
+  // Item defaultTarget persists on create and can be cleared on update
+  const created = createQuickCommand([], {
+    title: 'Triage',
+    body: 'run triage',
+    defaultTarget: { kind: 'desk' },
+  }, { now: () => '2026-11-23T00:00:00.000Z', createId: () => 'qc-t1' })
+  assert.equal(created.ok, true)
+  assert.deepEqual(created.item.defaultTarget, { kind: 'desk' })
+  saveQuickCommands(storage, created.items)
+  assert.deepEqual(loadQuickCommands(storage)[0].defaultTarget, { kind: 'desk' })
+
+  const cleared = updateQuickCommand(created.items, 'qc-t1', { defaultTarget: null }, {
+    now: () => '2026-11-23T01:00:00.000Z',
+  })
+  assert.equal(cleared.ok, true)
+  assert.equal(cleared.item.defaultTarget, undefined)
+})

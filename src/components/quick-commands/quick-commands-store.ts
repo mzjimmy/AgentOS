@@ -9,12 +9,16 @@ import {
   QUICK_COMMAND_CATEGORIES,
   QUICK_COMMANDS_SCHEMA_VERSION,
   QUICK_COMMANDS_STORAGE_KEY,
+  QUICK_COMMANDS_TARGET_STORAGE_KEY,
   type QuickCommandCategory,
   type QuickCommandDraftInput,
   type QuickCommandFilter,
   type QuickCommandItem,
   type QuickCommandSendReadiness,
   type QuickCommandStorageLike,
+  type QuickCommandTarget,
+  type QuickCommandTargetOption,
+  type ResolvedQuickCommandTarget,
 } from '../../quick-commands-contract'
 
 export type QuickCommandClock = {
@@ -36,6 +40,35 @@ function readText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+export function normalizeQuickCommandTarget(value: unknown): QuickCommandTarget | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (record.kind === 'desk') return { kind: 'desk' }
+  if (record.kind === 'project') {
+    const projectId = readText(record.projectId)
+    if (projectId) return { kind: 'project', projectId }
+  }
+  return null
+}
+
+export function serializeQuickCommandTargetKey(target: QuickCommandTarget | null | undefined): string {
+  if (!target) return ''
+  if (target.kind === 'desk') return 'desk'
+  const projectId = readText(target.projectId)
+  return projectId ? `project:${projectId}` : ''
+}
+
+export function parseQuickCommandTargetKey(key: string): QuickCommandTarget | null {
+  const trimmed = key.trim()
+  if (!trimmed) return null
+  if (trimmed === 'desk') return { kind: 'desk' }
+  if (trimmed.startsWith('project:')) {
+    const projectId = trimmed.slice('project:'.length).trim()
+    if (projectId) return { kind: 'project', projectId }
+  }
+  return null
+}
+
 function normalizeStoredItem(value: unknown, clock?: QuickCommandClock): QuickCommandItem | null {
   if (!value || typeof value !== 'object') return null
   const record = value as Record<string, unknown>
@@ -49,12 +82,14 @@ function normalizeStoredItem(value: unknown, clock?: QuickCommandClock): QuickCo
   const useCount = typeof record.useCount === 'number' && Number.isFinite(record.useCount)
     ? Math.max(0, Math.floor(record.useCount))
     : 0
+  const defaultTarget = normalizeQuickCommandTarget(record.defaultTarget)
   return {
     id,
     title,
     body,
     category: normalizeQuickCommandCategory(record.category),
     pinned: record.pinned === true,
+    ...(defaultTarget ? { defaultTarget } : {}),
     createdAt,
     updatedAt,
     lastUsedAt,
@@ -96,12 +131,14 @@ function writeEnvelope(storage: QuickCommandStorageLike, items: readonly QuickCo
 }
 
 function materializeDraft(draft: QuickCommandDraftInput, id: string, now: string): QuickCommandItem {
+  const defaultTarget = normalizeQuickCommandTarget(draft.defaultTarget)
   return {
     id,
     title: draft.title.trim(),
     body: draft.body.trim(),
     category: normalizeQuickCommandCategory(draft.category),
     pinned: draft.pinned === true,
+    ...(defaultTarget ? { defaultTarget } : {}),
     createdAt: now,
     updatedAt: now,
     lastUsedAt: null,
@@ -193,6 +230,9 @@ export function updateQuickCommand(
   const body = input.body === undefined ? current.body : readText(input.body)
   if (!title) return { ok: false, reason: 'blank_title' }
   if (!body) return { ok: false, reason: 'blank_body' }
+  const nextDefaultTarget = input.defaultTarget === undefined
+    ? normalizeQuickCommandTarget(current.defaultTarget)
+    : normalizeQuickCommandTarget(input.defaultTarget)
   const item: QuickCommandItem = {
     ...current,
     title,
@@ -200,6 +240,11 @@ export function updateQuickCommand(
     category: input.category === undefined ? current.category : normalizeQuickCommandCategory(input.category),
     pinned: input.pinned === undefined ? current.pinned : input.pinned === true,
     updatedAt: nowIso(clock),
+  }
+  if (nextDefaultTarget) {
+    item.defaultTarget = nextDefaultTarget
+  } else {
+    delete item.defaultTarget
   }
   const next = items.slice()
   next[index] = item
@@ -307,6 +352,120 @@ export function resolveCommandSendState(
   if (!projectId) return { canSend: false, reason: 'no_active_project' }
   const projectName = readText(project?.name) || projectId
   return { canSend: true, projectId, projectName }
+}
+
+export type QuickCommandProjectRef = {
+  id: string
+  name: string
+  path?: string
+  pathMissing?: boolean
+}
+
+function normalizePath(value: string | undefined | null): string {
+  return typeof value === 'string' ? value.trim().replace(/[\\/]+$/, '') : ''
+}
+
+export function loadQuickCommandsHeaderTarget(storage: QuickCommandStorageLike): QuickCommandTarget | null {
+  let raw: string | null = null
+  try {
+    raw = storage.getItem(QUICK_COMMANDS_TARGET_STORAGE_KEY)
+  } catch {
+    return null
+  }
+  if (!raw) return null
+  try {
+    return normalizeQuickCommandTarget(JSON.parse(raw) as unknown)
+  } catch {
+    return parseQuickCommandTargetKey(raw)
+  }
+}
+
+export function saveQuickCommandsHeaderTarget(
+  storage: QuickCommandStorageLike,
+  target: QuickCommandTarget,
+): boolean {
+  const normalized = normalizeQuickCommandTarget(target)
+  if (!normalized) return false
+  try {
+    storage.setItem(QUICK_COMMANDS_TARGET_STORAGE_KEY, JSON.stringify(normalized))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function buildQuickCommandTargetOptions(
+  projects: readonly QuickCommandProjectRef[],
+  options: { deskRoot?: string; deskLabel?: string } = {},
+): QuickCommandTargetOption[] {
+  const normalizedDesk = normalizePath(options.deskRoot)
+  const deskLabel = readText(options.deskLabel) || 'SentinelDesk'
+  const result: QuickCommandTargetOption[] = [
+    { key: 'desk', target: { kind: 'desk' }, label: deskLabel },
+  ]
+  const seenIds = new Set<string>()
+  for (const project of projects) {
+    const id = readText(project.id)
+    if (!id || seenIds.has(id) || project.pathMissing) continue
+    if (normalizedDesk && normalizePath(project.path) === normalizedDesk) continue
+    seenIds.add(id)
+    result.push({
+      key: `project:${id}`,
+      target: { kind: 'project', projectId: id },
+      label: readText(project.name) || id,
+    })
+  }
+  return result
+}
+
+function matchTargetOption(
+  target: QuickCommandTarget | null | undefined,
+  options: readonly QuickCommandTargetOption[],
+  projects: readonly QuickCommandProjectRef[],
+  deskRoot: string,
+): QuickCommandTargetOption | null {
+  if (!target) return null
+  if (target.kind === 'desk') return options[0] ?? null
+  const direct = options.find((opt) => opt.target.kind === 'project' && opt.target.projectId === target.projectId)
+  if (direct) return direct
+  // If the target projectId happens to be the mounted deskRoot project, map cleanly to `desk`.
+  if (deskRoot) {
+    const deskProj = projects.find(
+      (p) => !p.pathMissing && readText(p.id) === target.projectId && normalizePath(p.path) === deskRoot,
+    )
+    if (deskProj) return options[0] ?? null
+  }
+  return null
+}
+
+export function resolveEffectiveQuickCommandTarget(input: {
+  itemTarget?: QuickCommandTarget | null
+  headerTarget?: QuickCommandTarget | null
+  activeProject?: { id?: string | null; name?: string | null; path?: string | null; pathMissing?: boolean } | null
+  projects: readonly QuickCommandProjectRef[]
+  deskRoot?: string
+  deskLabel?: string
+}): ResolvedQuickCommandTarget {
+  const normalizedDesk = normalizePath(input.deskRoot)
+  const options = buildQuickCommandTargetOptions(input.projects, {
+    deskRoot: normalizedDesk,
+    deskLabel: input.deskLabel,
+  })
+  const deskOption = options[0]
+
+  const fromCommand = matchTargetOption(input.itemTarget, options, input.projects, normalizedDesk)
+  if (fromCommand) return { ...fromCommand, source: 'command' }
+
+  const fromHeader = matchTargetOption(input.headerTarget, options, input.projects, normalizedDesk)
+  if (fromHeader) return { ...fromHeader, source: 'header' }
+
+  const activeId = readText(input.activeProject?.id)
+  if (activeId && !input.activeProject?.pathMissing) {
+    const fromActive = matchTargetOption({ kind: 'project', projectId: activeId }, options, input.projects, normalizedDesk)
+    if (fromActive) return { ...fromActive, source: 'active' }
+  }
+
+  return { ...deskOption, source: 'desk' }
 }
 
 export type CopyQuickCommandDeps = {

@@ -1,6 +1,6 @@
 /**
- * SentinelDesk 常用命令：本机 localStorage 提示词，复制或发给当前项目的 Agent。
- * Stays on this view. Sending reuses sendAgentCommand and does not open the thread.
+ * SentinelDesk 常用命令：本机 localStorage 提示词，支持目标项目选择与单命令默认目标，
+ * 发给 Agent 后停留在当前页，并通过 toast 提供直达新对话入口。
  */
 
 import '../../styles/quick-commands-page.css'
@@ -9,29 +9,43 @@ import { createPortal } from 'react-dom'
 import { AgentCommandChannelError, sendAgentCommand } from '../../agent-command-channel'
 import { IconInline } from '../../icon-inline'
 import { useI18n } from '../../i18n/i18n'
+import { DEFAULT_SENTINEL_DESK_ROOT } from '../../journal-contract'
 import {
   QUICK_COMMAND_CATEGORIES,
   type QuickCommandCategory,
+  type QuickCommandDispatchInput,
+  type QuickCommandDispatchResult,
   type QuickCommandItem,
   type QuickCommandStorageLike,
+  type QuickCommandTarget,
+  type ResolvedQuickCommandTarget,
 } from '../../quick-commands-contract'
 import type { WorkspaceProject } from '../types'
 import {
+  buildQuickCommandTargetOptions,
   copyQuickCommandText,
   createQuickCommand,
   deleteQuickCommand,
   filterAndSortQuickCommands,
   loadQuickCommands,
+  loadQuickCommandsHeaderTarget,
+  parseQuickCommandTargetKey,
   recordCommandUsageInStorage,
   resolveCommandSendState,
+  resolveEffectiveQuickCommandTarget,
   saveQuickCommands,
+  saveQuickCommandsHeaderTarget,
+  serializeQuickCommandTargetKey,
   togglePinQuickCommand,
   updateQuickCommand,
 } from './quick-commands-store'
 
 export type QuickCommandsPageProps = {
   hidden?: boolean
-  activeProject?: Pick<WorkspaceProject, 'id' | 'name'> | null
+  activeProject?: Pick<WorkspaceProject, 'id' | 'name' | 'path' | 'pathMissing'> | null
+  projects?: readonly Pick<WorkspaceProject, 'id' | 'name' | 'path' | 'pathMissing'>[]
+  onSendCommand?: (input: QuickCommandDispatchInput) => Promise<QuickCommandDispatchResult>
+  onOpenDispatchedThread?: (projectId: string, threadId: string) => void
 }
 
 type EditorDraft = {
@@ -40,6 +54,7 @@ type EditorDraft = {
   title: string
   body: string
   category: QuickCommandCategory
+  defaultTargetKey: string
   pinned: boolean
 }
 
@@ -49,6 +64,7 @@ type Notice = {
   id: number
   tone: 'ok' | 'error'
   message: string
+  threadLink?: { projectId: string; threadId: string }
 }
 
 const BODY_CLAMP_CHARS = 140
@@ -111,11 +127,19 @@ function categoryLabel(t: (path: string) => string, category: QuickCommandCatego
   }
 }
 
-export function QuickCommandsPage({ hidden = false, activeProject = null }: QuickCommandsPageProps) {
+export function QuickCommandsPage({
+  hidden = false,
+  activeProject = null,
+  projects = [],
+  onSendCommand,
+  onOpenDispatchedThread,
+}: QuickCommandsPageProps) {
   const { t } = useI18n()
   const titleFieldId = useId()
   const bodyFieldId = useId()
   const categoryFieldId = useId()
+  const targetFieldId = useId()
+  const headerTargetSelectId = useId()
   const dialogTitleId = useId()
   const titleInputRef = useRef<HTMLInputElement | null>(null)
   const newBtnRef = useRef<HTMLButtonElement | null>(null)
@@ -130,6 +154,8 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
   const [items, setItems] = useState<QuickCommandItem[]>(() => loadQuickCommands(browserStorage()))
   const itemsRef = useRef(items)
   itemsRef.current = items
+  const [deskRoot, setDeskRoot] = useState<string>(DEFAULT_SENTINEL_DESK_ROOT)
+  const [headerTarget, setHeaderTarget] = useState<QuickCommandTarget | null>(() => loadQuickCommandsHeaderTarget(browserStorage()))
   const [category, setCategory] = useState<QuickCommandCategory | 'all'>('all')
   const [query, setQuery] = useState('')
   const [editor, setEditor] = useState<EditorDraft | null>(null)
@@ -140,22 +166,54 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
 
-  const sendState = resolveCommandSendState(activeProject)
+  useEffect(() => {
+    let active = true
+    void window.desktop?.getJournalConfig?.()
+      .then((cfg) => {
+        if (active && cfg?.deskRoot?.trim()) setDeskRoot(cfg.deskRoot.trim())
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const deskLabel = t('quickCommands.targetDesk')
+  const targetOptions = useMemo(
+    () => buildQuickCommandTargetOptions(projects, { deskRoot, deskLabel }),
+    [deskLabel, deskRoot, projects],
+  )
+  const resolvedHeaderTarget = useMemo(
+    () => resolveEffectiveQuickCommandTarget({
+      headerTarget,
+      activeProject,
+      projects,
+      deskRoot,
+      deskLabel,
+    }),
+    [activeProject, deskLabel, deskRoot, headerTarget, projects],
+  )
+  const fallbackSendState = resolveCommandSendState(activeProject)
+  const canSend = onSendCommand ? true : fallbackSendState.canSend
   const visible = useMemo(
     () => filterAndSortQuickCommands(items, { category, query }),
     [items, category, query],
   )
   const filtersActive = category !== 'all' || query.trim().length > 0
 
-  const showNotice = useCallback((tone: Notice['tone'], message: string) => {
+  const showNotice = useCallback((
+    tone: Notice['tone'],
+    message: string,
+    threadLink?: { projectId: string; threadId: string },
+  ) => {
     if (!mountedRef.current) return
     const id = Date.now()
-    setNotice({ id, tone, message })
+    setNotice({ id, tone, message, threadLink })
     window.clearTimeout(noticeTimerRef.current)
     noticeTimerRef.current = window.setTimeout(() => {
       if (!mountedRef.current) return
       setNotice((current) => (current?.id === id ? null : current))
-    }, 3600)
+    }, threadLink ? 5600 : 3600)
   }, [])
 
   const persist = useCallback((next: QuickCommandItem[]) => {
@@ -190,6 +248,7 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
       title: editor.title,
       body: editor.body,
       category: editor.category,
+      defaultTarget: parseQuickCommandTargetKey(editor.defaultTargetKey),
       pinned: editor.pinned,
     }
     const currentItems = itemsRef.current
@@ -300,30 +359,61 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
     }, 1600)
   }
 
-  const sendItem = async (item: QuickCommandItem) => {
-    if (!sendState.canSend || sendingLockRef.current) return
-    const targetName = sendState.projectName
+  const handleHeaderTargetChange = (value: string) => {
+    const parsed = parseQuickCommandTargetKey(value)
+    if (!parsed) return
+    setHeaderTarget(parsed)
+    saveQuickCommandsHeaderTarget(browserStorage(), parsed)
+  }
+
+  const sendItem = async (item: QuickCommandItem, resolvedTarget: ResolvedQuickCommandTarget) => {
+    if (!canSend || sendingLockRef.current) return
     sendingLockRef.current = true
     setSendingId(item.id)
     setNotice(null)
     try {
-      const result = await sendAgentCommand(item.body, {
-        threadTitle: item.title,
-        navigation: 'stay',
-      })
-      const failure = failedSendReason(result)
-      if (failure !== null) {
-        showNotice('error', failure || t('quickCommands.sendFailed'))
-        return
+      let sentProjectId = ''
+      let sentProjectName = resolvedTarget.label
+      let sentThreadId = ''
+      if (onSendCommand) {
+        const res = await onSendCommand({
+          title: item.title,
+          body: item.body,
+          target: resolvedTarget.target,
+        })
+        if (!res.ok) {
+          showNotice('error', res.error || t('quickCommands.sendFailed'))
+          return
+        }
+        sentProjectId = res.projectId
+        sentProjectName = res.projectName
+        sentThreadId = res.threadId
+      } else {
+        const targetName = fallbackSendState.canSend ? fallbackSendState.projectName : resolvedTarget.label
+        const result = await sendAgentCommand(item.body, {
+          threadTitle: item.title,
+          navigation: 'stay',
+        })
+        const failure = failedSendReason(result)
+        if (failure !== null) {
+          showNotice('error', failure || t('quickCommands.sendFailed'))
+          return
+        }
+        sentProjectId = result.projectId
+        sentProjectName = targetName
+        sentThreadId = result.threadId
       }
       const { items: synced, saved } = recordCommandUsageInStorage(browserStorage(), item.id)
       if (mountedRef.current) {
         itemsRef.current = synced
         setItems(synced)
+        const threadLink = sentProjectId && sentThreadId
+          ? { projectId: sentProjectId, threadId: sentThreadId }
+          : undefined
         if (!saved) {
           showNotice('error', t('quickCommands.saveFailed'))
         } else {
-          showNotice('ok', t('quickCommands.sentTo', { name: targetName }))
+          showNotice('ok', t('quickCommands.sentTo', { name: sentProjectName }), threadLink)
         }
       }
     } catch (error) {
@@ -362,15 +452,23 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
         <div className="qc-header-inner">
           <div className="qc-header-copy">
             <h1 className="qc-title">{t('shell.viewQuickCommands')}</h1>
-            <p className="qc-lead">{t('quickCommands.lead')}</p>
           </div>
           <div className="qc-header-actions">
             <p className="qc-count">{t('quickCommands.count', { count: items.length })}</p>
-            <p className={sendState.canSend ? 'qc-target' : 'qc-target qc-target-idle'}>
-              {sendState.canSend
-                ? t('quickCommands.targetProject', { name: sendState.projectName })
-                : t('quickCommands.noActiveProject')}
-            </p>
+            <label className="qc-target-picker" htmlFor={headerTargetSelectId}>
+              <span className="qc-target-prefix">{t('quickCommands.targetPrefix')}</span>
+              <select
+                id={headerTargetSelectId}
+                className="qc-target-select"
+                aria-label={t('quickCommands.targetSelectLabel')}
+                value={resolvedHeaderTarget.key}
+                onChange={(event) => handleHeaderTargetChange(event.target.value)}
+              >
+                {targetOptions.map((option) => (
+                  <option key={option.key} value={option.key}>{option.label}</option>
+                ))}
+              </select>
+            </label>
             <button
               ref={newBtnRef}
               type="button"
@@ -380,6 +478,7 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
                 title: '',
                 body: '',
                 category: 'other',
+                defaultTargetKey: '',
                 pinned: false,
               }, event.currentTarget)}
             >
@@ -388,7 +487,7 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
             </button>
           </div>
         </div>
-        {sendState.canSend ? null : (
+        {canSend ? null : (
           <p className="qc-banner">{t('quickCommands.sendNeedsProject')}</p>
         )}
       </header>
@@ -444,6 +543,7 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
                   title: '',
                   body: '',
                   category: 'other',
+                  defaultTargetKey: '',
                   pinned: false,
                 }, event.currentTarget)}
               >
@@ -474,6 +574,14 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
                 const expanded = expandedIds.has(item.id)
                 const showToggle = bodyNeedsToggle(item.body)
                 const sending = sendingId === item.id
+                const effectiveTarget = resolveEffectiveQuickCommandTarget({
+                  itemTarget: item.defaultTarget,
+                  headerTarget: resolvedHeaderTarget.target,
+                  activeProject,
+                  projects,
+                  deskRoot,
+                  deskLabel,
+                })
                 return (
                   <article
                     key={item.id}
@@ -482,6 +590,9 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
                     <div className="qc-card-top">
                       <span className={`qc-chip qc-chip-${item.category}`}>{categoryLabel(t, item.category)}</span>
                       {item.pinned ? <span className="qc-pin-mark">{t('quickCommands.pinned')}</span> : null}
+                      {effectiveTarget.source === 'command' ? (
+                        <span className="qc-target-chip">{t('quickCommands.cardFixedTarget', { name: effectiveTarget.label })}</span>
+                      ) : null}
                       {item.useCount > 0 ? (
                         <span className="qc-meta">{t('quickCommands.useCount', { count: item.useCount })}</span>
                       ) : null}
@@ -515,10 +626,12 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
                       <button
                         type="button"
                         className="qc-btn qc-btn-send"
-                        disabled={!sendState.canSend || sendingId !== null}
+                        disabled={!canSend || sendingId !== null}
                         aria-busy={sending}
-                        title={sendState.canSend ? t('quickCommands.send') : t('quickCommands.sendNeedsProject')}
-                        onClick={() => void sendItem(item)}
+                        title={canSend
+                          ? t('quickCommands.sendToTitle', { name: effectiveTarget.label })
+                          : t('quickCommands.sendNeedsProject')}
+                        onClick={() => void sendItem(item, effectiveTarget)}
                       >
                         <IconInline name="send" />
                         <span>{sending ? t('quickCommands.sending') : t('quickCommands.send')}</span>
@@ -532,6 +645,7 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
                           title: item.title,
                           body: item.body,
                           category: item.category,
+                          defaultTargetKey: serializeQuickCommandTargetKey(item.defaultTarget),
                           pinned: item.pinned,
                         }, event.currentTarget)}
                       >
@@ -589,6 +703,19 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
       {notice ? (
         <div className={notice.tone === 'error' ? 'qc-toast qc-toast-error' : 'qc-toast qc-toast-ok'} role="status">
           <p className="qc-toast-text">{notice.message}</p>
+          {notice.threadLink && onOpenDispatchedThread ? (
+            <button
+              type="button"
+              className="qc-toast-link"
+              onClick={() => {
+                const link = notice.threadLink
+                setNotice(null)
+                if (link) onOpenDispatchedThread(link.projectId, link.threadId)
+              }}
+            >
+              {t('quickCommands.openDispatchedThread')}
+            </button>
+          ) : null}
           <button type="button" className="qc-text-btn" onClick={() => setNotice(null)}>
             {t('quickCommands.dismiss')}
           </button>
@@ -652,6 +779,20 @@ export function QuickCommandsPage({ hidden = false, activeProject = null }: Quic
               >
                 {QUICK_COMMAND_CATEGORIES.map((entry) => (
                   <option key={entry} value={entry}>{categoryLabel(t, entry)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="qc-label" htmlFor={targetFieldId}>
+              {t('quickCommands.fieldTarget')}
+              <select
+                id={targetFieldId}
+                className="qc-select"
+                value={editor.defaultTargetKey}
+                onChange={(event) => patchEditor({ defaultTargetKey: event.target.value })}
+              >
+                <option value="">{t('quickCommands.targetFollowHeader')}</option>
+                {targetOptions.map((option) => (
+                  <option key={option.key} value={option.key}>{option.label}</option>
                 ))}
               </select>
             </label>
