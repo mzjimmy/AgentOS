@@ -2,6 +2,7 @@
 
 | Change ID | 标题 | 状态 | 路径 |
 |---|---|---|---|
+| `chg-20261123-sentinel-desk-briefing-and-outbound` | SentinelDesk 每日早报（NewsAgent 固化）与外宣工坊（双轨去 AI 味输出） | active | `active/chg-20261123-sentinel-desk-briefing-and-outbound/` |
 | `chg-20261123-sentinel-desk-language-push` | SentinelDesk 外语学习推送板块（静默语料 + 达门槛词法互动卡） | active（MVP B/A/A 已落地验证：EN+JA 双语、每日 8 张 6词+2语法、离线朗读；`tsc` + 70/70 单测 + `vite build` 全绿） | `active/chg-20261123-sentinel-desk-language-push/` |
 | `chg-20261120-sentinel-desk-journal` | SentinelDesk 时间日记固定页与飞书双写桥接 | active（verified on `feat/sentinel-desk-journal`；20/20 new TDD tests + 520/524 suite + live 1,143-entry readonly sync + bridge dual-write E2E） | `active/chg-20261120-sentinel-desk-journal/` |
 | `chg-20261119-task-skill-sessions` | 任务卡 Skill 独立会话 | 已归档（verified，revision 1） | [验收场景](archive/2026/chg-20261119-task-skill-sessions/ExampleMapping.md) |

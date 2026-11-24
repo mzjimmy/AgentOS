@@ -139,8 +139,10 @@ test('Desktop seam contract drives preload forwarding and main registration', ()
   const appUpdater = readFileSync(resolve(root, 'electron/app-updater.ts'), 'utf8')
   const journalIpc = readFileSync(resolve(root, 'electron/desk/journal-ipc.ts'), 'utf8')
   const languagePushIpc = readFileSync(resolve(root, 'electron/desk/language-push-ipc.ts'), 'utf8')
+  const morningBriefIpc = readFileSync(resolve(root, 'electron/desk/morning-brief-ipc.ts'), 'utf8')
+  const outboundIpc = readFileSync(resolve(root, 'electron/desk/outbound-ipc.ts'), 'utf8')
   const speechRecognition = readFileSync(resolve(root, 'electron/speech-recognition.ts'), 'utf8')
-  const registrationSource = `${main}\n${appUpdater}\n${journalIpc}\n${languagePushIpc}`
+  const registrationSource = `${main}\n${appUpdater}\n${journalIpc}\n${languagePushIpc}\n${morningBriefIpc}\n${outboundIpc}`
   const eventProducerSource = `${main}\n${appUpdater}\n${speechRecognition}`
 
   assert.deepEqual(DESKTOP_STATIC_CAPABILITIES, ['platform', 'isDevRuntime', 'windowEffects'])

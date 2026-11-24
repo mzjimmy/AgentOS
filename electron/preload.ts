@@ -68,6 +68,24 @@ import type {
   LanguagePushSpeakResult,
 } from '../src/language-push-contract'
 import type {
+  MorningBriefChangedEvent,
+  MorningBriefConfig,
+  MorningBriefOverview,
+  MorningBriefRunResult,
+  MorningBriefSpeakInput,
+  MorningBriefSpeakResult,
+  MorningBriefSwapResult,
+} from '../src/morning-brief-contract'
+import type {
+  OutboundChangedEvent,
+  OutboundConfig,
+  OutboundDraftInput,
+  OutboundDraftResult,
+  OutboundExtractResult,
+  OutboundOverview,
+  OutboundSaveDraftInput,
+} from '../src/outbound-contract'
+import type {
   ActiveChatPickPayload,
   ClaudeAgentSettings,
   ClaudeAgentStatusRequest,
@@ -613,14 +631,14 @@ const desktopAdapter = {
     ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onIntentTodoChanged, listener)
     return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onIntentTodoChanged, listener)
   },
-  getLanguagePushOverview() {
-    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getLanguagePushOverview) as Promise<LanguagePushOverview>
+  getLanguagePushOverview(date?: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getLanguagePushOverview, date) as Promise<LanguagePushOverview>
   },
   runLanguagePush(options?: { date?: string; force?: boolean }) {
     return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.runLanguagePush, options) as Promise<LanguagePushRunResult>
   },
-  decideLanguagePushCard(cardId: string, action: LanguagePushDecisionAction) {
-    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.decideLanguagePushCard, cardId, action) as Promise<LanguagePushActionResult>
+  decideLanguagePushCard(cardId: string, action: LanguagePushDecisionAction, date?: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.decideLanguagePushCard, cardId, action, date) as Promise<LanguagePushActionResult>
   },
   getLanguagePushConfig() {
     return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getLanguagePushConfig) as Promise<LanguagePushConfig>
@@ -635,6 +653,52 @@ const desktopAdapter = {
     const listener = (_event: IpcRendererEvent, event: LanguagePushChangedEvent) => handler(event)
     ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onLanguagePushChanged, listener)
     return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onLanguagePushChanged, listener)
+  },
+  getMorningBriefOverview(selectedDate?: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getMorningBriefOverview, selectedDate) as Promise<MorningBriefOverview>
+  },
+  runMorningBrief(options?: { date?: string; force?: boolean }) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.runMorningBrief, options) as Promise<MorningBriefRunResult>
+  },
+  swapMorningBriefItem(date: string, itemId: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.swapMorningBriefItem, date, itemId) as Promise<MorningBriefSwapResult>
+  },
+  getMorningBriefConfig() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getMorningBriefConfig) as Promise<MorningBriefConfig>
+  },
+  saveMorningBriefConfig(patch: Partial<MorningBriefConfig>) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.saveMorningBriefConfig, patch) as Promise<MorningBriefConfig>
+  },
+  speakMorningBrief(input: MorningBriefSpeakInput) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.speakMorningBrief, input) as Promise<MorningBriefSpeakResult>
+  },
+  onMorningBriefChanged(handler: (event: MorningBriefChangedEvent) => void) {
+    const listener = (_event: IpcRendererEvent, event: MorningBriefChangedEvent) => handler(event)
+    ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onMorningBriefChanged, listener)
+    return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onMorningBriefChanged, listener)
+  },
+  getOutboundOverview(selectedDate?: string) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getOutboundOverview, selectedDate) as Promise<OutboundOverview>
+  },
+  extractOutboundPack(options?: { date?: string; force?: boolean }) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.extractOutboundPack, options) as Promise<OutboundExtractResult>
+  },
+  generateOutboundDraft(input: OutboundDraftInput) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.generateOutboundDraft, input) as Promise<OutboundDraftResult>
+  },
+  saveOutboundDraft(input: OutboundSaveDraftInput) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.saveOutboundDraft, input) as Promise<OutboundDraftResult>
+  },
+  getOutboundConfig() {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getOutboundConfig) as Promise<OutboundConfig>
+  },
+  saveOutboundConfig(patch: Partial<OutboundConfig>) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.saveOutboundConfig, patch) as Promise<OutboundConfig>
+  },
+  onOutboundChanged(handler: (event: OutboundChangedEvent) => void) {
+    const listener = (_event: IpcRendererEvent, event: OutboundChangedEvent) => handler(event)
+    ipcRenderer.on(DESKTOP_EVENT_CHANNELS.onOutboundChanged, listener)
+    return () => ipcRenderer.off(DESKTOP_EVENT_CHANNELS.onOutboundChanged, listener)
   },
 } satisfies DesktopAPI
 

@@ -43,7 +43,11 @@ const JournalPage = lazy(async () => ({ default: (await import('./journal/Journa
 const IntentTodoPage = lazy(async () => ({ default: (await import('./intent-todo/IntentTodoPage')).IntentTodoPage }))
 const QuickCommandsPage = lazy(async () => ({ default: (await import('./quick-commands/QuickCommandsPage')).QuickCommandsPage }))
 const LanguagePushPage = lazy(async () => ({ default: (await import('./language-push/LanguagePushPage')).LanguagePushPage }))
+const MorningBriefPage = lazy(async () => ({ default: (await import('./morning-brief/MorningBriefPage')).MorningBriefPage }))
+const OutboundPage = lazy(async () => ({ default: (await import('./outbound/OutboundPage')).OutboundPage }))
+import { MorningBriefMiniPlayer } from './morning-brief/MorningBriefMiniPlayer'
 import type { JournalDiscussTarget, JournalEntry } from '../journal-contract'
+import type { QuickCommandDispatchInput, QuickCommandDispatchResult } from '../quick-commands-contract'
 import { useWorkspaceAgentMode } from './useWorkspaceAgentMode'
 import type { AgentModeSettingsResult, HomePluginRunItem } from '../desktop-types'
 import { projectContent } from '../project-content'
@@ -161,6 +165,7 @@ type AppShellWorkspaceProps = {
   onDiscussJournalEntry?: (entry: JournalEntry, target: JournalDiscussTarget) => void | Promise<void>
   onIntentTodoPendingCountChange?: (count: number) => void
   onOpenDispatchedThread?: (projectId: string, threadId: string) => void
+  onSendQuickCommand?: (input: QuickCommandDispatchInput) => Promise<QuickCommandDispatchResult>
   onNavigateToJournalAnchor?: (date: string, entryId: string) => void
   onOpenModelSettings?: () => void
 }
@@ -220,6 +225,7 @@ export function AppShellWorkspace({
   onDiscussJournalEntry,
   onIntentTodoPendingCountChange,
   onOpenDispatchedThread,
+  onSendQuickCommand,
   onNavigateToJournalAnchor,
   onOpenModelSettings,
 }: AppShellWorkspaceProps) {
@@ -228,7 +234,7 @@ export function AppShellWorkspace({
   const { t } = useI18n()
   const runtimeDevelopmentUi = runtimeDevelopmentStatus(t, runtimeDevelopment)
   const isSettingsChromeHidden = activeViewId === 'settings'
-  const isDeskView = activeViewId === 'journal' || activeViewId === 'intent-todo' || activeViewId === 'quick-commands' || activeViewId === 'language-push'
+  const isDeskView = activeViewId === 'journal' || activeViewId === 'intent-todo' || activeViewId === 'quick-commands' || activeViewId === 'language-push' || activeViewId === 'morning-brief' || activeViewId === 'outbound'
   const [sidePanel, setSidePanel] = useState<SidePanelState>(() => ({ open: false, tab: 'files' }))
   const [filePreview, setFilePreview] = useState<ProjectFilePreviewOverlayState | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -707,7 +713,13 @@ export function AppShellWorkspace({
           ) : null}
           {!isRuntimeActive && activeViewId === 'quick-commands' ? (
             <Suspense fallback={null}>
-              <QuickCommandsPage hidden={false} activeProject={activeProject} />
+              <QuickCommandsPage
+                hidden={false}
+                activeProject={activeProject}
+                projects={projects}
+                onSendCommand={onSendQuickCommand}
+                onOpenDispatchedThread={onOpenDispatchedThread}
+              />
             </Suspense>
           ) : null}
           {!isRuntimeActive && activeViewId === 'language-push' ? (
@@ -719,6 +731,24 @@ export function AppShellWorkspace({
               />
             </Suspense>
           ) : null}
+          {!isRuntimeActive && activeViewId === 'morning-brief' ? (
+            <Suspense fallback={null}>
+              <MorningBriefPage
+                hidden={false}
+                onOpenModelSettings={onOpenModelSettings}
+              />
+            </Suspense>
+          ) : null}
+          {!isRuntimeActive && activeViewId === 'outbound' ? (
+            <Suspense fallback={null}>
+              <OutboundPage
+                hidden={false}
+                onNavigateToJournalAnchor={onNavigateToJournalAnchor}
+                onOpenModelSettings={onOpenModelSettings}
+              />
+            </Suspense>
+          ) : null}
+          <MorningBriefMiniPlayer activeViewId={activeViewId} />
           {!isRuntimeActive ? <DocsPage hidden={activeViewId !== 'docs'} /> : null}
           {!isRuntimeActive && activeViewId === 'settings' ? (
             <Suspense fallback={null}>

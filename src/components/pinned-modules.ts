@@ -38,6 +38,18 @@ export const PINNED_MODULES: readonly PinnedModuleDefinition[] = [
     icon: 'languages',
     hash: '#language-push',
   },
+  {
+    id: 'morning-brief',
+    labelKey: 'sidebar.pinnedMorningBrief',
+    icon: 'newspaper',
+    hash: '#morning-brief',
+  },
+  {
+    id: 'outbound',
+    labelKey: 'sidebar.pinnedOutbound',
+    icon: 'megaphone',
+    hash: '#outbound',
+  },
 ] as const
 
 export function resolvePinnedModuleByViewId(viewId: string): PinnedModuleDefinition | undefined {

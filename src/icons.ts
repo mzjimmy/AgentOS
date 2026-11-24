@@ -106,6 +106,14 @@ export const Icons = {
     '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="4" rx="1"/><path stroke-linecap="round" stroke-linejoin="round" d="M5 8.5v9.5a1.75 1.75 0 001.75 1.75h10.5A1.75 1.75 0 0019 18V8.5M10 12.5h4"/></svg>',
   languages:
     '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h10M9 4v2m-3.5 0c.5 4.2 3 7.5 6.5 9.2M12.5 6c-.8 3.8-3.4 7-7.5 9.2M13.5 19l3.25-8.5L20 19M14.7 16.2h4.1"/></svg>',
+  newspaper:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 4.5h11a1.5 1.5 0 011.5 1.5v12.25a1.75 1.75 0 001.75 1.75H6.75A1.75 1.75 0 015 18.25V4.5z"/><path stroke-linecap="round" stroke-linejoin="round" d="M17.5 8.5H19A1.5 1.5 0 0120.5 10v8.25a1.75 1.75 0 01-3 1.24"/><path stroke-linecap="round" d="M8.5 8.5h5.5M8.5 12h5.5M8.5 15.5h3.5"/></svg>',
+  megaphone:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5v3a1.5 1.5 0 001.5 1.5h2.25l6.75 3.5V5.5L8.25 9H6a1.5 1.5 0 00-1.5 1.5z"/><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 15l.9 3.6a1.2 1.2 0 001.16.9h1.19"/><path stroke-linecap="round" d="M18 9.25a3.5 3.5 0 010 5.5"/></svg>',
+  pause:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6.5" y="5.5" width="3.8" height="13" rx="1.2"/><rect x="13.7" y="5.5" width="3.8" height="13" rx="1.2"/></svg>',
+  externalLink:
+    '<svg class="icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5h5v5M19 5l-8.5 8.5"/><path stroke-linecap="round" stroke-linejoin="round" d="M11 6H6.75A1.75 1.75 0 005 7.75v9.5C5 18.22 5.78 19 6.75 19h9.5A1.75 1.75 0 0018 17.25V13"/></svg>',
 } as const
 
 /** Icons 对象的联合键 / Keys available on Icons map */

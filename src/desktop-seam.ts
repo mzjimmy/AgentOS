@@ -161,6 +161,18 @@ export const DESKTOP_INVOKE_CHANNELS = {
   getLanguagePushConfig: 'desktop:language-push:get-config',
   saveLanguagePushConfig: 'desktop:language-push:save-config',
   speakLanguagePush: 'desktop:language-push:speak',
+  getMorningBriefOverview: 'desktop:morning-brief:get-overview',
+  runMorningBrief: 'desktop:morning-brief:run',
+  swapMorningBriefItem: 'desktop:morning-brief:swap-item',
+  getMorningBriefConfig: 'desktop:morning-brief:get-config',
+  saveMorningBriefConfig: 'desktop:morning-brief:save-config',
+  speakMorningBrief: 'desktop:morning-brief:speak',
+  getOutboundOverview: 'desktop:outbound:get-overview',
+  extractOutboundPack: 'desktop:outbound:extract',
+  generateOutboundDraft: 'desktop:outbound:generate-draft',
+  saveOutboundDraft: 'desktop:outbound:save-draft',
+  getOutboundConfig: 'desktop:outbound:get-config',
+  saveOutboundConfig: 'desktop:outbound:save-config',
 } as const satisfies Record<DesktopInvokeCapability, string>
 
 export const DESKTOP_EVENT_CHANNELS = {
@@ -178,6 +190,8 @@ export const DESKTOP_EVENT_CHANNELS = {
   onJournalAutoTagChanged: 'desktop:journal:auto-tag-changed',
   onIntentTodoChanged: 'desktop:intent-todo-changed',
   onLanguagePushChanged: 'desktop:language-push-changed',
+  onMorningBriefChanged: 'desktop:morning-brief-changed',
+  onOutboundChanged: 'desktop:outbound-changed',
 } as const satisfies Record<DesktopEventCapability, string>
 
 export const DESKTOP_SEAM_CAPABILITIES = [

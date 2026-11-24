@@ -73,6 +73,24 @@ import type {
   LanguagePushSpeakResult,
 } from './language-push-contract'
 import type {
+  MorningBriefChangedEvent,
+  MorningBriefConfig,
+  MorningBriefOverview,
+  MorningBriefRunResult,
+  MorningBriefSpeakInput,
+  MorningBriefSpeakResult,
+  MorningBriefSwapResult,
+} from './morning-brief-contract'
+import type {
+  OutboundChangedEvent,
+  OutboundConfig,
+  OutboundDraftInput,
+  OutboundDraftResult,
+  OutboundExtractResult,
+  OutboundOverview,
+  OutboundSaveDraftInput,
+} from './outbound-contract'
+import type {
   AgentModeFilesResult,
   AgentMcpGlobalSettings,
   AgentMcpGlobalSettingsResult,
@@ -427,13 +445,31 @@ export type DesktopAPI = {
   getIntentTodoConfig?: () => Promise<IntentTodoConfig>
   saveIntentTodoConfig?: (patch: Partial<IntentTodoConfig>) => Promise<IntentTodoConfig>
   onIntentTodoChanged?: (listener: (event: IntentTodoChangedEvent) => void) => () => void
-  getLanguagePushOverview?: () => Promise<LanguagePushOverview>
+  getLanguagePushOverview?: (date?: string) => Promise<LanguagePushOverview>
   runLanguagePush?: (options?: { date?: string; force?: boolean }) => Promise<LanguagePushRunResult>
-  decideLanguagePushCard?: (cardId: string, action: LanguagePushDecisionAction) => Promise<LanguagePushActionResult>
+  decideLanguagePushCard?: (
+    cardId: string,
+    action: LanguagePushDecisionAction,
+    date?: string,
+  ) => Promise<LanguagePushActionResult>
   getLanguagePushConfig?: () => Promise<LanguagePushConfig>
   saveLanguagePushConfig?: (patch: Partial<LanguagePushConfig>) => Promise<LanguagePushConfig>
   speakLanguagePush?: (input: LanguagePushSpeakInput) => Promise<LanguagePushSpeakResult>
   onLanguagePushChanged?: (listener: (event: LanguagePushChangedEvent) => void) => () => void
+  getMorningBriefOverview?: (selectedDate?: string) => Promise<MorningBriefOverview>
+  runMorningBrief?: (options?: { date?: string; force?: boolean }) => Promise<MorningBriefRunResult>
+  swapMorningBriefItem?: (date: string, itemId: string) => Promise<MorningBriefSwapResult>
+  getMorningBriefConfig?: () => Promise<MorningBriefConfig>
+  saveMorningBriefConfig?: (patch: Partial<MorningBriefConfig>) => Promise<MorningBriefConfig>
+  speakMorningBrief?: (input: MorningBriefSpeakInput) => Promise<MorningBriefSpeakResult>
+  onMorningBriefChanged?: (listener: (event: MorningBriefChangedEvent) => void) => () => void
+  getOutboundOverview?: (selectedDate?: string) => Promise<OutboundOverview>
+  extractOutboundPack?: (options?: { date?: string; force?: boolean }) => Promise<OutboundExtractResult>
+  generateOutboundDraft?: (input: OutboundDraftInput) => Promise<OutboundDraftResult>
+  saveOutboundDraft?: (input: OutboundSaveDraftInput) => Promise<OutboundDraftResult>
+  getOutboundConfig?: () => Promise<OutboundConfig>
+  saveOutboundConfig?: (patch: Partial<OutboundConfig>) => Promise<OutboundConfig>
+  onOutboundChanged?: (listener: (event: OutboundChangedEvent) => void) => () => void
 }
 
 export type {
@@ -479,4 +515,22 @@ export type {
   LanguagePushSpeakInput,
   LanguagePushSpeakResult,
 } from './language-push-contract'
+export type {
+  MorningBriefChangedEvent,
+  MorningBriefConfig,
+  MorningBriefOverview,
+  MorningBriefRunResult,
+  MorningBriefSpeakInput,
+  MorningBriefSpeakResult,
+  MorningBriefSwapResult,
+} from './morning-brief-contract'
+export type {
+  OutboundChangedEvent,
+  OutboundConfig,
+  OutboundDraftInput,
+  OutboundDraftResult,
+  OutboundExtractResult,
+  OutboundOverview,
+  OutboundSaveDraftInput,
+} from './outbound-contract'
 

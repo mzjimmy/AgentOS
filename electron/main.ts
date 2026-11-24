@@ -3,7 +3,7 @@
  * Electron main entry: window lifecycle, tray menu, IPC bridges, and Claude Agent runner.
  */
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, safeStorage, session, shell, Tray, WebContentsView } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, safeStorage, screen, session, shell, Tray, WebContentsView } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -45,6 +45,17 @@ import { registerJournalIpc } from './desk/journal-ipc'
 import { IntentTodoService } from './desk/intent-todo-service'
 import { LanguagePushService } from './desk/language-push-service'
 import { registerLanguagePushIpc } from './desk/language-push-ipc'
+import { MorningBriefService } from './desk/morning-brief-service'
+import { registerMorningBriefIpc } from './desk/morning-brief-ipc'
+import { OutboundService } from './desk/outbound-service'
+import { registerOutboundIpc } from './desk/outbound-ipc'
+import {
+  attachMainWindowBoundsPersistence,
+  MainWindowBoundsStore,
+  MIN_MAIN_WINDOW_HEIGHT,
+  MIN_MAIN_WINDOW_WIDTH,
+  resolveInitialMainWindowBounds,
+} from './desk/main-window-bounds'
 import { ProjectChatViewStateStore } from './project-chat-view-state-store'
 import { RuntimePreviewLayoutStore } from './runtime-preview-layout-store'
 import { AgentOSDeepLinkQueue, parseAgentOSDeepLink } from './agentos-deep-link'
@@ -219,6 +230,8 @@ let journalStore: JournalStore | null = null
 let feishuJournalBridge: FeishuJournalBridgeService | null = null
 let intentTodoService: IntentTodoService | null = null
 let languagePushService: LanguagePushService | null = null
+let morningBriefService: MorningBriefService | null = null
+let outboundService: OutboundService | null = null
 let journalAutoTagService: JournalAutoTagService | null = null
 let journalAutoTagDebounceTimer: NodeJS.Timeout | null = null
 const journalAutoTagPendingDates = new Set<string>()
@@ -339,6 +352,52 @@ function getLanguagePushService(): LanguagePushService {
     })
   }
   return languagePushService
+}
+
+function getMorningBriefService(): MorningBriefService {
+  if (!morningBriefService) {
+    morningBriefService = new MorningBriefService({
+      journalStore: getJournalStore(),
+      settingsStore: getClaudeAgentSettingsStore(),
+      isOnline: () => net.isOnline(),
+      onChanged: (event) => {
+        for (const windowItem of BrowserWindow.getAllWindows()) {
+          if (!windowItem.isDestroyed()) {
+            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onMorningBriefChanged, event)
+          }
+        }
+      },
+    })
+  }
+  return morningBriefService
+}
+
+function getOutboundService(): OutboundService {
+  if (!outboundService) {
+    outboundService = new OutboundService({
+      journalStore: getJournalStore(),
+      settingsStore: getClaudeAgentSettingsStore(),
+      defaultRepoPaths: () => {
+        try {
+          const state = getChatWorkspaceStore()?.read()
+          if (!state) return []
+          return state.projects
+            .map((p) => p.path)
+            .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+        } catch {
+          return []
+        }
+      },
+      onChanged: (event) => {
+        for (const windowItem of BrowserWindow.getAllWindows()) {
+          if (!windowItem.isDestroyed()) {
+            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onOutboundChanged, event)
+          }
+        }
+      },
+    })
+  }
+  return outboundService
 }
 let projectRuntimePlacementTracker: ProjectRuntimePlacementTracker | null = null
 let localAppTrustStore: LocalAppTrustStore | null = null
@@ -509,15 +568,26 @@ function attachExternalLinkHandlers(contents: Electron.WebContents) {
   })
 }
 
+let mainWindowBoundsTracker: { flushNow: () => void; dispose: () => void } | null = null
+
 function createWindow() {
   const isMac = process.platform === 'darwin'
   const windowBackgroundColor = getWindowBackgroundColor()
+  const boundsStore = new MainWindowBoundsStore(app.getPath('userData'))
+  const initialBounds = resolveInitialMainWindowBounds(
+    boundsStore.read(),
+    screen.getAllDisplays(),
+    screen.getPrimaryDisplay(),
+  )
 
   win = new BrowserWindow({
-    width: 1100,
-    height: 720,
-    minWidth: 640,
-    minHeight: 480,
+    width: initialBounds.width,
+    height: initialBounds.height,
+    ...(typeof initialBounds.x === 'number' && typeof initialBounds.y === 'number'
+      ? { x: initialBounds.x, y: initialBounds.y }
+      : {}),
+    minWidth: MIN_MAIN_WINDOW_WIDTH,
+    minHeight: MIN_MAIN_WINDOW_HEIGHT,
     backgroundColor: isMac ? '#00000000' : windowBackgroundColor,
     icon: getAppIconPath(),
     title: APP_NAME,
@@ -537,6 +607,9 @@ function createWindow() {
       : {}),
     ...getMainWindowChromeOptions(process.platform, nativeTheme.shouldUseDarkColors),
   })
+
+  mainWindowBoundsTracker?.dispose()
+  mainWindowBoundsTracker = attachMainWindowBoundsPersistence(win, boundsStore, initialBounds)
 
   const previewWindow = win
   localAppPreviewManager = new LocalAppPreviewManager({
@@ -1043,7 +1116,7 @@ function taskHomeRunPort() {
   if (!runner) return null
   return {
     async ensureThread() {},
-    async submit(input: { text: string; threadId: string; promptMode: 'home-plugin-task-run'; agentModeSettingsOverride: { enabled: true; todoEnabled: boolean } }) { return runner.submit({ text: input.text, threadId: input.threadId, promptMode: input.promptMode, agentModeSettingsOverride: input.agentModeSettingsOverride }) },
+    async submit(input: { text: string; threadId: string; promptMode: 'home-plugin-task-run'; agentModeSettingsOverride: { enabled: true; todoEnabled: boolean } }) { return runner.submit({ text: input.text, threadId: input.threadId, promptMode: input.promptMode, agentModeSettingsOverride: input.agentModeSettingsOverride, permissionMode: getDesktopPreferencesStore().read().chatPermissionMode ?? 'auto' }) },
     async cancel(input: { requestId: string }) { await runner.cancel(input.requestId) },
   }
 }
@@ -1466,6 +1539,8 @@ async function prepareForAppQuit(): Promise<void> {
     feishuJournalBridge?.dispose()
     intentTodoService?.dispose()
     languagePushService?.dispose()
+    morningBriefService?.dispose()
+    outboundService?.dispose()
     if (journalAutoTagDebounceTimer) {
       clearTimeout(journalAutoTagDebounceTimer)
       journalAutoTagDebounceTimer = null
@@ -1522,6 +1597,7 @@ if (gotSingleInstanceLock) {
   })
 
   app.on('before-quit', (event) => {
+    mainWindowBoundsTracker?.flushNow()
     agentOSExternalTaskService?.dispose()
     void agentOSPairingService?.cancelAll()
     if (localAppQuitCleanup) return
@@ -1780,7 +1856,8 @@ if (gotSingleInstanceLock) {
     })
     ipcMain.handle('claude-chat:submit', (_event, payload: ClaudeChatSubmitPayload) => {
       const { projectId: _rendererProjectId, projectRuntimePrompt: _rendererRuntimePrompt, ...safePayload } = payload
-      return getClaudeAgentRunner().submit(safePayload)
+      const permissionMode = safePayload.permissionMode ?? getDesktopPreferencesStore().read().chatPermissionMode ?? 'auto'
+      return getClaudeAgentRunner().submit({ ...safePayload, permissionMode })
     })
     ipcMain.handle('claude-chat:cancel', (_event, requestId?: string) => {
       return getClaudeAgentRunner().cancel(requestId)
@@ -2916,6 +2993,8 @@ if (gotSingleInstanceLock) {
     })
     registerJournalIpc(ipcMain, getJournalStore)
     registerLanguagePushIpc(ipcMain, getLanguagePushService)
+    registerMorningBriefIpc(ipcMain, getMorningBriefService)
+    registerOutboundIpc(ipcMain, getOutboundService)
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getFeishuJournalBridgeStatus, () => getFeishuJournalBridge().getStatus())
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveFeishuJournalBridgeConfig, (_event, update: unknown) => getFeishuJournalBridge().updateConfig((update ?? {}) as any))
     ipcMain.handle(DESKTOP_INVOKE_CHANNELS.reconnectFeishuJournalBridge, () => getFeishuJournalBridge().reconnect())
@@ -2956,6 +3035,7 @@ if (gotSingleInstanceLock) {
     initializeAgentOSExternalTasks()
     getIntentTodoService().start()
     getLanguagePushService().start()
+    getMorningBriefService().start()
     // Catch up on today's journal a few seconds after boot.
     setTimeout(() => {
       void getJournalAutoTagService().runAutoTag().catch(() => undefined)
@@ -2963,11 +3043,13 @@ if (gotSingleInstanceLock) {
     powerMonitor.on('resume', () => {
       intentTodoService?.notifySystemResumeOrFocus()
       languagePushService?.notifySystemResumeOrFocus()
+      morningBriefService?.notifySystemResumeOrFocus()
       void getJournalAutoTagService().runAutoTag().catch(() => undefined)
     })
     app.on('browser-window-focus', () => {
       intentTodoService?.notifySystemResumeOrFocus()
       languagePushService?.notifySystemResumeOrFocus()
+      morningBriefService?.notifySystemResumeOrFocus()
     })
     ensureTray()
     appUpdaterService.scheduleUpdateChecks()
