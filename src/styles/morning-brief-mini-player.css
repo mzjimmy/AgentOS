@@ -1,0 +1,77 @@
+/* Morning Brief global floating mini-player (dark capsule, shown while audio plays on other views) */
+
+.mb-mini-player {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 65;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 8px;
+  border-radius: 999px;
+  background: #18212d;
+  color: #f4f6f8;
+  box-shadow: 0 10px 28px rgba(12, 18, 28, 0.34), 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+}
+
+.mb-mini-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.1);
+  color: #f6c167;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mb-mini-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.mb-mini-jump {
+  border: 0;
+  background: none;
+  padding: 0 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  cursor: pointer;
+  color: inherit;
+}
+
+.mb-mini-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+  white-space: nowrap;
+}
+
+.mb-mini-meta {
+  font-size: 11px;
+  font-family: var(--j-font-mono);
+  color: rgba(244, 246, 248, 0.68);
+}
+
+.mb-mini-speed {
+  height: 28px;
+  min-width: 44px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(246, 193, 103, 0.16);
+  color: #f6c167;
+  font-family: var(--j-font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 140ms ease;
+}
+
+.mb-mini-speed:hover {
+  opacity: 0.85;
+}
