@@ -1,24 +1,31 @@
 /**
  * Background orchestration service for SentinelDesk Language Push.
  *
- * - Reads non-private journal entries from JournalStore (with 3-day lookback when today has
- *   no unprocessed entries yet, giving users an immediate Day-1 study deck).
+ * - Reads non-private journal entries across a sliding lookback window (default 7 days)
+ *   and combines them with recent archived translated corpus for high-frequency word mining
+ *   + user 3-tier familiarity profile (陌生 / 模糊 / 熟悉) for adaptive expansion.
+ * - Multi-source extensible design: defines `LanguagePushCorpusProvider` so future Desk
+ *   windows (e.g. Morning Brief / 早报) can plug in alongside the built-in `'journal'` source
+ *   without rewriting the storage, scheduler, or UI layers.
  * - Resolves cloud model from ClaudeAgentSettingsStore (supports dedicated `modelPick` override).
  * - Runs silent daily schedule after 04:00 Asia/Shanghai cutover (optional, configurable).
  */
 
 import type { ChatModelPick, ClaudeAgentResolvedConfig, ClaudeAgentSettingsSnapshot } from '../../src/claude-chat-types'
 import type { JournalDayResult, JournalEntry } from '../../src/journal-contract'
-import type {
-  LanguagePushActionResult,
-  LanguagePushChangedEvent,
-  LanguagePushConfig,
-  LanguagePushDecisionAction,
-  LanguagePushOverview,
-  LanguagePushRunResult,
-  LanguagePushRunState,
-  LanguagePushSpeakInput,
-  LanguagePushSpeakResult,
+import {
+  LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS,
+  LANGUAGE_PUSH_DEFAULT_SOURCE_KIND,
+  type LanguagePushActionResult,
+  type LanguagePushChangedEvent,
+  type LanguagePushConfig,
+  type LanguagePushCorpusSourceKind,
+  type LanguagePushDecisionAction,
+  type LanguagePushOverview,
+  type LanguagePushRunResult,
+  type LanguagePushRunState,
+  type LanguagePushSpeakInput,
+  type LanguagePushSpeakResult,
 } from '../../src/language-push-contract'
 import { getShanghaiLogicalDay, hasPassedShanghaiCutover, shiftDateString } from './intent-todo-time'
 import { analyzeJournalForLanguagePush, type LanguagePushLlmCaller } from './language-push-analyzer'
@@ -34,6 +41,16 @@ export interface LanguagePushJournalReader {
   getDay(date: string): Promise<JournalDayResult> | JournalDayResult
 }
 
+/**
+ * Extensible corpus source contract for future Desk modules (e.g., Morning Brief / 早报).
+ * Today only the built-in `'journal'` provider is registered; additional providers can be
+ * passed via `extraCorpusProviders` in `LanguagePushServiceOptions` when ready.
+ */
+export interface LanguagePushCorpusProvider {
+  readonly kind: LanguagePushCorpusSourceKind
+  readEntriesForDate(date: string): Promise<JournalEntry[]>
+}
+
 export interface LanguagePushSettingsResolver {
   resolve(modelPick?: ChatModelPick): ClaudeAgentResolvedConfig
   getSnapshot(): ClaudeAgentSettingsSnapshot
@@ -42,6 +59,7 @@ export interface LanguagePushSettingsResolver {
 export type LanguagePushServiceOptions = {
   journalStore: LanguagePushJournalReader
   settingsStore: LanguagePushSettingsResolver
+  extraCorpusProviders?: readonly LanguagePushCorpusProvider[]
   now?: () => Date
   isOnline?: () => boolean
   llmCaller?: LanguagePushLlmCaller
@@ -50,15 +68,16 @@ export type LanguagePushServiceOptions = {
 }
 
 const SCHEDULE_TICK_MS = 10 * 60 * 1000
-const INITIAL_LOOKBACK_DAYS = 3
 
 export class LanguagePushService {
   readonly store: LanguagePushStore
   private readonly now: () => Date
   private readonly isOnline: () => boolean
+  private readonly corpusProviders: LanguagePushCorpusProvider[]
   private runState: LanguagePushRunState = 'idle'
   private runError: string | null = null
-  private inflightRun: Promise<LanguagePushRunResult> | null = null
+  private inflightRun: { logicalDate: string; force: boolean; promise: Promise<LanguagePushRunResult> } | null = null
+  private runChain: Promise<unknown> = Promise.resolve()
   private tickTimer: ReturnType<typeof setInterval> | null = null
   private disposed = false
 
@@ -69,6 +88,14 @@ export class LanguagePushService {
       getDeskRoot: () => options.journalStore.getConfig().deskRoot,
       now: this.now,
     })
+    const journalProvider: LanguagePushCorpusProvider = {
+      kind: LANGUAGE_PUSH_DEFAULT_SOURCE_KIND,
+      readEntriesForDate: async (date: string) => {
+        const res = await options.journalStore.getDay(date)
+        return res && res.ok ? res.entries : []
+      },
+    }
+    this.corpusProviders = [journalProvider, ...(options.extraCorpusProviders ?? [])]
   }
 
   private resolveProviderDisplay(): {
@@ -110,7 +137,7 @@ export class LanguagePushService {
     })
   }
 
-  getOverview(): LanguagePushOverview {
+  getOverview(date?: string): LanguagePushOverview {
     const provider = this.resolveProviderDisplay()
     return this.store.buildOverview({
       runState: this.runState,
@@ -121,6 +148,7 @@ export class LanguagePushService {
         configured: provider.configured,
         ttsConfigured: provider.ttsConfigured,
       },
+      targetDate: date,
     })
   }
 
@@ -147,51 +175,74 @@ export class LanguagePushService {
     return updated
   }
 
-  async decideCard(cardId: string, action: LanguagePushDecisionAction): Promise<LanguagePushActionResult> {
+  async decideCard(
+    cardId: string,
+    action: LanguagePushDecisionAction,
+    date?: string,
+  ): Promise<LanguagePushActionResult> {
     const { card } = await this.store.applyDecision(cardId, action)
     this.emitChanged('card-decided')
     return {
       ok: Boolean(card),
       card,
-      overview: this.getOverview(),
+      overview: this.getOverview(date),
     }
   }
 
-  private async readEntriesForDate(date: string): Promise<JournalEntry[]> {
-    const res = await this.options.journalStore.getDay(date)
-    return res && res.ok ? res.entries : []
-  }
-
+  /**
+   * Collects entries across the recent `corpusWindowDays` (default 7 days), newest first.
+   * Currently backed by the `'journal'` provider; future Desk providers plug in seamlessly.
+   */
   private async collectEntriesForRun(
     logicalDate: string,
-    processedEntryIds: Record<string, string>,
-    enabledLangs: readonly string[],
-    force: boolean,
+    windowDays: number,
   ): Promise<JournalEntry[]> {
-    const primary = await this.readEntriesForDate(logicalDate)
-    const isUnprocessedForAnyLang = (entryId: string) =>
-      force ||
-      enabledLangs.some((lang) => !processedEntryIds[`${entryId}:${lang}`] && !processedEntryIds[entryId])
-    const hasUnprocessedInPrimary = primary.some((e) => isUnprocessedForAnyLang(e.id))
-    if (hasUnprocessedInPrimary) {
-      return primary
-    }
-    // Look back up to 3 recent days when today has no new entries yet (great for Day-1 bootstrap)
-    const combined: JournalEntry[] = [...primary]
-    for (let offset = 1; offset <= INITIAL_LOOKBACK_DAYS; offset += 1) {
+    const days = Math.max(1, Math.min(30, Math.floor(windowDays || LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS)))
+    const combined: JournalEntry[] = []
+    for (let offset = 0; offset < days; offset += 1) {
       const date = shiftDateString(logicalDate, -offset)
-      const dayEntries = await this.readEntriesForDate(date)
-      if (dayEntries.length > 0) combined.push(...dayEntries)
+      for (const provider of this.corpusProviders) {
+        const dayEntries = await provider.readEntriesForDate(date)
+        if (dayEntries.length > 0) combined.push(...dayEntries)
+      }
     }
     return combined
   }
 
   async runExtraction(options: { date?: string; force?: boolean } = {}): Promise<LanguagePushRunResult> {
-    if (this.inflightRun) return this.inflightRun
-    const run = this.executeRun(options).finally(() => {
-      if (this.inflightRun === run) this.inflightRun = null
-    })
-    this.inflightRun = run
+    const cfg = this.store.getConfig()
+    const logicalDate =
+      options.date && /^\d{4}-\d{2}-\d{2}$/.test(options.date)
+        ? options.date
+        : getShanghaiLogicalDay(this.now(), cfg.cutoverHour)
+    const force = options.force === true
+
+    if (
+      this.inflightRun &&
+      this.inflightRun.logicalDate === logicalDate &&
+      (!force || this.inflightRun.force)
+    ) {
+      return this.inflightRun.promise
+    }
+
+    const entry: { logicalDate: string; force: boolean; promise: Promise<LanguagePushRunResult> } = {
+      logicalDate,
+      force,
+      promise: null as unknown as Promise<LanguagePushRunResult>,
+    }
+
+    const run = this.runChain
+      .then(() => this.executeRun({ date: logicalDate, force }))
+      .finally(() => {
+        if (this.inflightRun === entry) this.inflightRun = null
+      })
+
+    entry.promise = run
+    this.inflightRun = entry
+    this.runChain = run.then(
+      () => undefined,
+      () => undefined,
+    )
     return run
   }
 
@@ -208,7 +259,7 @@ export class LanguagePushService {
       this.runState = 'needs_config'
       this.runError = '请先在「模型设置」中配置可用的云端模型 API Key。'
       this.emitChanged('run-failed')
-      return { ok: false, logicalDate, overview: this.getOverview(), error: this.runError }
+      return { ok: false, logicalDate, overview: this.getOverview(logicalDate), error: this.runError }
     }
 
     this.runState = 'running'
@@ -217,12 +268,18 @@ export class LanguagePushService {
 
     try {
       const processedEntryIds = this.store.getProcessedEntryIds()
-      const entries = await this.collectEntriesForRun(logicalDate, processedEntryIds, cfg.enabledLangs, force)
+      const entries = await this.collectEntriesForRun(logicalDate, cfg.corpusWindowDays)
+      const recentCorpusItems = this.store.readRecentCorpusItems(logicalDate, cfg.corpusWindowDays)
+      const familiarityByLang = this.store.buildFamiliarityProfileByLang()
 
       const result = await analyzeJournalForLanguagePush({
         logicalDate,
         entries,
+        sourceKind: LANGUAGE_PUSH_DEFAULT_SOURCE_KIND,
         processedEntryIds,
+        recentCorpusItems,
+        familiarityByLang,
+        allowCorpusOnlyMine: force,
         force,
         config: cfg,
         resolvedModel: provider.config,
@@ -233,7 +290,7 @@ export class LanguagePushService {
         this.runState = result.kind === 'needs_config' ? 'needs_config' : 'error'
         this.runError = result.message
         this.emitChanged('run-failed')
-        return { ok: false, logicalDate, overview: this.getOverview(), error: result.message }
+        return { ok: false, logicalDate, overview: this.getOverview(logicalDate), error: result.message }
       }
 
       await this.store.mergeExtractionResult({
@@ -252,14 +309,14 @@ export class LanguagePushService {
       return {
         ok: true,
         logicalDate,
-        overview: this.getOverview(),
+        overview: this.getOverview(logicalDate),
         error: this.runError ?? undefined,
       }
     } catch (error) {
       this.runState = 'error'
       this.runError = error instanceof Error ? error.message : String(error)
       this.emitChanged('run-failed')
-      return { ok: false, logicalDate, overview: this.getOverview(), error: this.runError }
+      return { ok: false, logicalDate, overview: this.getOverview(logicalDate), error: this.runError }
     }
   }
 

@@ -2,24 +2,28 @@
  * Privacy-guarded cloud translator & threshold-aware vocab/grammar extractor
  * for SentinelDesk Language Push.
  *
- * Precision architecture inspired by SentinelLab `reading-assist-v28-script-aligned-vocab`:
+ * Precision architecture:
  * 1. Hard privacy filter (`isPrivateJournalEntry` + `scrubSecrets`) BEFORE prompt assembly.
  * 2. One focused, dedicated LLM call PER target language (never mixing EN & JA in one stream,
  *    preventing cross-language token drift and Simplified Chinese leakage into Japanese).
- * 3. Deterministic script & quality validator (`validateLanguageCard`) rejecting foreign scripts,
- *    PRC-Simplified-only Hanzi in Japanese, stray code/Latin artifacts, and invalid readings.
- * 4. Automatic 1-pass repair retry when JSON parsing fails or cards fail script validation.
- * 5. Mandatory `exampleReadings` kanji→kana annotations for Japanese so MiniMax TTS never
- *    mispronounces Japanese kanji compounds with Chinese pronunciation.
+ * 3. 7-day translated corpus high-frequency mining: extracts threshold-passing high-frequency
+ *    terms from archived non-private translations and feeds them as priority candidates.
+ * 4. Familiarity-guided adaptive expansion: injects the user's recent 3-tier familiarity
+ *    ratings (陌生 / 模糊 / 熟悉) so the model prioritizes weak zones, expands 1-2 related
+ *    collocations/synonyms, and skips already-familiar difficulty bands.
+ * 5. Deterministic script & quality validator (`validateLanguageCard`) + 1-pass repair retry.
+ * 6. Mandatory `exampleReadings` kanji→kana annotations for Japanese MiniMax TTS accuracy.
  */
 
 import type { ClaudeAgentResolvedConfig } from '../../src/claude-chat-types'
 import type { JournalEntry } from '../../src/journal-contract'
 import {
+  LANGUAGE_PUSH_DEFAULT_SOURCE_KIND,
   LANGUAGE_PUSH_SUPPORTED_LANGS,
   type LanguagePushCardKind,
   type LanguagePushConfig,
   type LanguagePushCorpusItem,
+  type LanguagePushCorpusSourceKind,
   type LanguagePushLang,
 } from '../../src/language-push-contract'
 import {
@@ -29,6 +33,7 @@ import {
   type AnthropicMessagesResult,
 } from '../anthropic-messages-client'
 import { isPrivateJournalEntry, scrubSecrets } from './journal-privacy'
+import { extractCorpusHighFreqTerms, type CorpusHighFreqTerm } from './language-push-scheduler'
 import type { LanguagePushCandidateInput } from './language-push-store'
 import {
   isCleanJapaneseText,
@@ -40,6 +45,13 @@ const MAX_ENTRIES_PER_RUN = 6
 const MAX_TOTAL_INPUT_CHARS = 2_400
 const MIN_ENTRY_BODY_CHARS = 10
 
+export type LanguagePushFamiliaritySummary = {
+  unfamiliar: Array<{ surface: string; kind: LanguagePushCardKind; meaning: string }>
+  fuzzy: Array<{ surface: string; kind: LanguagePushCardKind; meaning: string }>
+  familiar: string[]
+  excludedWordKeys: Set<string>
+}
+
 export type LanguagePushLlmCaller = (
   config: Pick<ClaudeAgentResolvedConfig, 'apiKey' | 'authToken' | 'baseUrl' | 'model'>,
   request: AnthropicMessagesRequest,
@@ -49,7 +61,11 @@ export type LanguagePushLlmCaller = (
 export type LanguagePushAnalysisInput = {
   logicalDate: string
   entries: JournalEntry[]
+  sourceKind?: LanguagePushCorpusSourceKind
   processedEntryIds: Record<string, string>
+  recentCorpusItems?: LanguagePushCorpusItem[]
+  familiarityByLang?: Partial<Record<LanguagePushLang, LanguagePushFamiliaritySummary>>
+  allowCorpusOnlyMine?: boolean
   force?: boolean
   config: LanguagePushConfig
   resolvedModel: Pick<ClaudeAgentResolvedConfig, 'apiKey' | 'authToken' | 'baseUrl' | 'model'>
@@ -116,18 +132,21 @@ function extractJsonObject(raw: string): Record<string, unknown> | null {
 function buildSystemPromptForLang(lang: LanguagePushLang, config: LanguagePushConfig): string {
   if (lang === 'ja') {
     return [
-      'あなたは熟練した日本語教師・翻訳家です。中国語話者の日記から、高品質な日本語学習カードを作成してください。',
+      'あなたは熟練した日本語教師・翻訳家です。中国語話者の日記および直近の翻訳コーパスから、高品質な日本語学習カードを作成してください。',
       '以下の厳格なルールを必ず守ってください：',
-      `1. 対象レベル：JLPT ${config.jaLevel} 以上。初級の基礎語（これ・する・良い・今日など）は絶対に選ばないでください。`,
-      '2. 【文字の純度（最優先・違反厳禁）】',
+      `1. 対象レベル：JLPT ${config.jaLevel} 以上。初級の基礎語（これ・する・良い・今日など）や「既知（熟悉）」リストの語彙および同等の易しい語は絶対に選ばないでください。`,
+      '2. 【高頻度語優先 ＋ 熟知度に基づく同類展開】',
+      '   - 直近コーパスの高頻度候補語が与えられている場合、レベル基準を満たす高頻度語を最優先でカード化してください。',
+      '   - ユーザーの「陌生（不慣れ）」「模糊（曖昧）」履歴が与えられている場合、その苦手領域や文脈に近い実践表現・類義語・コロケーションを 1〜2 件展開して含めてください（展開カードには `"isExpansion": true` を付与）。',
+      '3. 【文字の純度（最優先・違反厳禁）】',
       '   - すべての日本語テキスト（corpus と exampleSentence）は、100%自然な現代日本語（日本の常用漢字・新字体、ひらがな、カタカナ）のみで書くこと。',
       '   - 中国語の簡体字や中国語表現の直コピーを厳禁する（例：×「人机互动」「环境」「开发流程」「页面」「时间日记」 → ○「人とAIの協働」「環境」「開発フロー」「画面」「タイムライン日記」）。',
       '   - アラビア文字、キリル文字、ハングル、スペイン語、文字化け、意味不明な英字断片（例：_Manager.vue, @unlink, kis, deき 等）を絶対に含めないこと。',
-      '3. 【読み仮名（reading）と発音注記（exampleReadings）の厳格ルール】',
-      '   - すべてのカードの `reading` は必ず正確なひらがな・カタカナのみで書くこと。スラッシュ（/…/）や漢字やローマ字を絶対に入れないこと（例：○「てをのばす」「いとぶんせき」「ほしゅうんよう」、×「/ても/」「てをなばす」）。',
-      '   - すべてのカードに `exampleReadings` 配列を必須で含め、`exampleSentence` 内に登場する**すべての漢字語・熟語**の正確なひらがな読みを列挙すること（例：[{"surface":"生成","reading":"せいせい"},{"surface":"有用","reading":"ゆうよう"},{"surface":"環境","reading":"かんきょう"}]）。これは音声合成（TTS）で中国語発音になるのを防ぐため極めて重要である。',
-      '4. 抽出目安：高品質な語彙（kind: "vocab"）3〜4件 ＋ 実用的な文法表現（kind: "grammar"）1〜2件。例文は日記の文脈に忠実で自然な1文にすること。',
-      '5. JSONオブジェクト1つのみを出力すること（前後に説明文を書かないこと）：',
+      '4. 【読み仮名（reading）と発音注記（exampleReadings）の厳格ルール】',
+      '   - すべてのカードの `reading` は必ず正確なひらがな・カタカナのみで書くこと。スラッシュ（/…/）や漢字やローマ字を絶対に入れないこと。',
+      '   - すべてのカードに `exampleReadings` 配列を必須で含め、`exampleSentence` 内に登場する**すべての漢字語・熟語**の正確なひらがな読みを列挙すること（例：[{"surface":"生成","reading":"せいせい"},{"surface":"環境","reading":"かんきょう"}]）。',
+      '5. 抽出目安：高品質な語彙（kind: "vocab"）3〜4件 ＋ 実用的な文法表現（kind: "grammar"）1〜2件。例文は日記の文脈に忠実で自然な1文にすること。',
+      '6. JSONオブジェクト1つのみを出力すること（前後に説明文を書かないこと）：',
       '{',
       '  "corpus": [',
       '    { "entryId": "je_...", "translatedText": "自然な日本語訳" }',
@@ -140,6 +159,7 @@ function buildSystemPromptForLang(lang: LanguagePushLang, config: LanguagePushCo
       '      "meaning": "简洁中文释义（≤24字）",',
       '      "grammarNote": "简明用法/接续提示（中文；词汇可为 null，语法必填）",',
       '      "levelTag": "N3" | "N2" | "N1",',
+      '      "isExpansion": false,',
       '      "exampleSentence": "自然な日本語例文（簡体字・文字化け厳禁）",',
       '      "exampleTranslation": "对应中文译文",',
       '      "exampleReadings": [',
@@ -153,13 +173,16 @@ function buildSystemPromptForLang(lang: LanguagePushLang, config: LanguagePushCo
   }
 
   return [
-    'You are an expert English language coach building a high-precision study deck from a Chinese speaker\'s personal journal.',
+    'You are an expert English language coach building a high-precision study deck from a Chinese speaker\'s personal journal and recent translated corpus.',
     'Follow these strict rules:',
-    `1. Target difficulty: above top-${config.enLevel} frequency words (CEFR B2+ / idiomatic engineering & life expressions) and crisp grammar/collocation patterns.`,
-    '2. NEVER output trivial basic words ("good", "time", "make", "work", etc.) and NEVER include Chinese characters, pinyin, or non-Latin garbled tokens in English text.',
-    '3. `reading` MUST be accurate IPA wrapped in slashes (e.g. "/rɪˈzɪliəns/"), NEVER Chinese pinyin.',
-    '4. Target output: 3-4 strong vocabulary cards (`kind: "vocab"`) + 1-2 practical grammar patterns (`kind: "grammar"`). Every example sentence must be natural, idiomatic English grounded directly in the user\'s journal entry.',
-    '5. Output ONLY a single valid JSON object (no prose outside JSON):',
+    `1. Target difficulty: above top-${config.enLevel} frequency words (CEFR B2+ / idiomatic engineering & life expressions) and crisp grammar/collocation patterns. NEVER output trivial basic words or words in the user's "Already familiar" list.`,
+    '2. [High-Frequency Corpus Priority + Familiarity-Guided Expansion]',
+    '   - When recent corpus high-frequency candidates are provided, prioritize threshold-passing high-frequency terms from that list.',
+    '   - When user "Unfamiliar" or "Fuzzy" history is provided, include 1-2 closely related high-value collocations, synonyms, or domain expressions grounded in the user\'s journal context (mark expanded cards with `"isExpansion": true`).',
+    '3. NEVER include Chinese characters, pinyin, or non-Latin garbled tokens in English text.',
+    '4. `reading` MUST be accurate IPA wrapped in slashes (e.g. "/rɪˈzɪliəns/"), NEVER Chinese pinyin.',
+    '5. Target output: 3-4 strong vocabulary cards (`kind: "vocab"`) + 1-2 practical grammar patterns (`kind: "grammar"`). Every example sentence must be natural, idiomatic English grounded directly in the user\'s journal context.',
+    '6. Output ONLY a single valid JSON object (no prose outside JSON):',
     '{',
     '  "corpus": [',
     '    { "entryId": "je_...", "translatedText": "Natural idiomatic English translation" }',
@@ -172,6 +195,7 @@ function buildSystemPromptForLang(lang: LanguagePushLang, config: LanguagePushCo
     '      "meaning": "简洁中文释义（≤24字）",',
     '      "grammarNote": "简明用法/搭配提示（中文；词汇可为 null，语法必填）",',
     '      "levelTag": "B2" | "C1",',
+    '      "isExpansion": false,',
     '      "exampleSentence": "Natural idiomatic English sentence grounded in the user\'s journal",',
     '      "exampleTranslation": "对应中文译文",',
     '      "sourceEntryId": "je_..."',
@@ -181,22 +205,71 @@ function buildSystemPromptForLang(lang: LanguagePushLang, config: LanguagePushCo
   ].join('\n')
 }
 
-function buildUserPromptForLang(
-  logicalDate: string,
-  lang: LanguagePushLang,
-  entries: Array<{ id: string; date: string; time: string; safeBody: string }>,
-): string {
+function buildUserPromptForLang(params: {
+  logicalDate: string
+  lang: LanguagePushLang
+  corpusWindowDays: number
+  entries: Array<{ id: string; date: string; time: string; safeBody: string }>
+  highFreqTerms: CorpusHighFreqTerm[]
+  familiarity?: LanguagePushFamiliaritySummary
+}): string {
+  const { logicalDate, lang, corpusWindowDays, entries, highFreqTerms, familiarity } = params
   const lines = [
     `Logical date: ${logicalDate}`,
     `Target language: ${lang === 'ja' ? 'Japanese (ja)' : 'English (en)'}`,
+    `Corpus lookback window: recent ${corpusWindowDays} days`,
     '',
-    'Journal entries (non-private, scrubbed):',
   ]
-  for (const item of entries) {
-    lines.push(`--- [${item.id}] (${item.date} ${item.time}) ---`)
-    lines.push(item.safeBody)
+
+  if (entries.length > 0) {
+    lines.push('New journal entries to translate & extract (non-private, scrubbed):')
+    for (const item of entries) {
+      lines.push(`--- [${item.id}] (${item.date} ${item.time}) ---`)
+      lines.push(item.safeBody)
+    }
+    lines.push('')
+  } else {
+    lines.push('No brand-new journal entries today; return `"corpus": []` and mine cards directly from the recent high-frequency corpus candidates below.')
+    lines.push('')
   }
-  return lines.join('\n')
+
+  if (highFreqTerms.length > 0) {
+    lines.push(`Recent ${corpusWindowDays}-day translated corpus high-frequency threshold candidates (prioritize these):`)
+    for (const t of highFreqTerms) {
+      lines.push(
+        `- ${t.term} (days=${t.docDays}, count=${t.totalCount}, entry=${t.sampleEntryId || 'corpus'} @ ${t.sampleDate}): "${t.sampleSentence}"`,
+      )
+    }
+    lines.push('')
+  }
+
+  if (familiarity) {
+    const hasProfile =
+      familiarity.unfamiliar.length > 0 || familiarity.fuzzy.length > 0 || familiarity.familiar.length > 0
+    if (hasProfile) {
+      lines.push('User familiarity history (use this to calibrate difficulty & expand 1-2 related expressions):')
+      if (familiarity.unfamiliar.length > 0) {
+        lines.push(
+          `- Unfamiliar (陌生 — needs reinforcement & related expansions): ${familiarity.unfamiliar
+            .map((x) => `${x.surface} (${x.kind}: ${x.meaning})`)
+            .join(', ')}`,
+        )
+      }
+      if (familiarity.fuzzy.length > 0) {
+        lines.push(
+          `- Fuzzy (模糊 — learning edge i+1): ${familiarity.fuzzy
+            .map((x) => `${x.surface} (${x.kind}: ${x.meaning})`)
+            .join(', ')}`,
+        )
+      }
+      if (familiarity.familiar.length > 0) {
+        lines.push(`- Already familiar (熟悉 — DO NOT pick these or simpler words): ${familiarity.familiar.join(', ')}`)
+      }
+      lines.push('')
+    }
+  }
+
+  return lines.join('\n').trim()
 }
 
 type SingleLangParseSummary = {
@@ -210,10 +283,21 @@ function parseAndValidateSingleLangPayload(
   parsed: Record<string, unknown>,
   lang: LanguagePushLang,
   logicalDate: string,
+  sourceKind: LanguagePushCorpusSourceKind,
   eligible: Array<{ id: string; date: string; time: string; safeBody: string }>,
+  highFreqTerms: CorpusHighFreqTerm[],
 ): SingleLangParseSummary {
   const entryDateById = new Map(eligible.map((e) => [e.id, e.date]))
-  const fallbackEntry = eligible[0]
+  for (const hf of highFreqTerms) {
+    if (hf.sampleEntryId && !entryDateById.has(hf.sampleEntryId)) {
+      entryDateById.set(hf.sampleEntryId, hf.sampleDate)
+    }
+  }
+  const fallbackEntry = eligible[0] ?? {
+    id: highFreqTerms[0]?.sampleEntryId || '',
+    date: highFreqTerms[0]?.sampleDate || logicalDate,
+  }
+  const freqByWordKey = new Map(highFreqTerms.map((t) => [t.wordKey, t.totalCount]))
 
   const corpusItems: Array<Omit<LanguagePushCorpusItem, 'createdAt'>> = []
   if (Array.isArray(parsed.corpus)) {
@@ -227,6 +311,7 @@ function parseAndValidateSingleLangPayload(
       corpusItems.push({
         entryId,
         sourceDate: entryDateById.get(entryId) || logicalDate,
+        sourceKind,
         lang,
         translatedText,
       })
@@ -265,6 +350,8 @@ function parseAndValidateSingleLangPayload(
     const sourceDate = entryDateById.get(sourceEntryId) || fallbackEntry.date
     const examplePronunciations =
       lang === 'ja' ? sanitizePronunciationHints(r.exampleReadings ?? r.pronunciations) : undefined
+    const normKey = lang === 'en' ? surface.toLowerCase() : surface
+    const matchedFreq = freqByWordKey.get(normKey)
 
     validCandidates.push({
       lang,
@@ -279,6 +366,9 @@ function parseAndValidateSingleLangPayload(
       examplePronunciations,
       sourceDate,
       sourceEntryId,
+      sourceKind,
+      corpusFreq: matchedFreq,
+      isExpansion: r.isExpansion === true,
     })
   }
 
@@ -293,7 +383,10 @@ function parseAndValidateSingleLangPayload(
 async function runSingleLanguageExtraction(params: {
   lang: LanguagePushLang
   logicalDate: string
+  sourceKind: LanguagePushCorpusSourceKind
   eligible: Array<{ id: string; date: string; time: string; safeBody: string }>
+  highFreqTerms: CorpusHighFreqTerm[]
+  familiarity?: LanguagePushFamiliaritySummary
   config: LanguagePushConfig
   resolvedModel: Pick<ClaudeAgentResolvedConfig, 'apiKey' | 'authToken' | 'baseUrl' | 'model'>
   callLlm: LanguagePushLlmCaller
@@ -312,14 +405,21 @@ async function runSingleLanguageExtraction(params: {
       message: string
     }
 > {
-  const { lang, logicalDate, eligible, config, resolvedModel, callLlm } = params
+  const { lang, logicalDate, sourceKind, eligible, highFreqTerms, familiarity, config, resolvedModel, callLlm } = params
   const systemPrompt = buildSystemPromptForLang(lang, config)
 
   // Keep high output budget for reasoning models; MiniMax-M3.1-Flash must use `effort: 'low'`
   // on both EN and JA or its unbounded thinking loop hits the 90s HTTP timeout.
   const isMiniMaxFlash = resolvedModel.model?.trim().toLowerCase() === 'minimax-m3.1-flash'
   const effectiveEligible = isMiniMaxFlash && lang === 'ja' ? eligible.slice(0, 4) : eligible
-  const effectiveUserPrompt = buildUserPromptForLang(logicalDate, lang, effectiveEligible)
+  const effectiveUserPrompt = buildUserPromptForLang({
+    logicalDate,
+    lang,
+    corpusWindowDays: config.corpusWindowDays,
+    entries: effectiveEligible,
+    highFreqTerms,
+    familiarity,
+  })
   const requestOptions = {
     maxTokens: 16_384,
     temperature: 0.1,
@@ -345,7 +445,9 @@ async function runSingleLanguageExtraction(params: {
   let modelUsed = firstRes.model || resolvedModel.model || ''
 
   let parsed = extractJsonObject(firstRes.text)
-  let summary = parsed ? parseAndValidateSingleLangPayload(parsed, lang, logicalDate, eligible) : null
+  let summary = parsed
+    ? parseAndValidateSingleLangPayload(parsed, lang, logicalDate, sourceKind, eligible, highFreqTerms)
+    : null
 
   const needsQualityRepair =
     !parsed ||
@@ -399,7 +501,14 @@ async function runSingleLanguageExtraction(params: {
       modelUsed = repairRes.model || modelUsed
       const repairedParsed = extractJsonObject(repairRes.text)
       if (repairedParsed) {
-        const repairedSummary = parseAndValidateSingleLangPayload(repairedParsed, lang, logicalDate, eligible)
+        const repairedSummary = parseAndValidateSingleLangPayload(
+          repairedParsed,
+          lang,
+          logicalDate,
+          sourceKind,
+          eligible,
+          highFreqTerms,
+        )
         if (!summary || repairedSummary.validCandidates.length >= summary.validCandidates.length) {
           parsed = repairedParsed
           summary = repairedSummary
@@ -440,6 +549,7 @@ export async function analyzeJournalForLanguagePush(
   input: LanguagePushAnalysisInput,
 ): Promise<LanguagePushAnalysisOutput> {
   const startedAt = Date.now()
+  const sourceKind = input.sourceKind ?? LANGUAGE_PUSH_DEFAULT_SOURCE_KIND
   const enabledLangs =
     input.config.enabledLangs.length > 0
       ? input.config.enabledLangs.filter((l): l is LanguagePushLang => LANGUAGE_PUSH_SUPPORTED_LANGS.includes(l))
@@ -448,7 +558,21 @@ export async function analyzeJournalForLanguagePush(
   let skippedPrivate = 0
   let skippedAlreadyProcessed = 0
   const eligibleByLang = new Map<LanguagePushLang, Array<{ id: string; date: string; time: string; safeBody: string }>>()
-  for (const lang of enabledLangs) eligibleByLang.set(lang, [])
+  const highFreqByLang = new Map<LanguagePushLang, CorpusHighFreqTerm[]>()
+  for (const lang of enabledLangs) {
+    eligibleByLang.set(lang, [])
+    const fam = input.familiarityByLang?.[lang]
+    const hf =
+      input.recentCorpusItems && input.recentCorpusItems.length > 0
+        ? extractCorpusHighFreqTerms(
+            input.recentCorpusItems,
+            lang,
+            input.config,
+            fam?.excludedWordKeys ?? new Set<string>(),
+          )
+        : []
+    highFreqByLang.set(lang, hf)
+  }
 
   const publicEntries: Array<{ id: string; date: string; time: string; safeBody: string }> = []
   for (const entry of input.entries) {
@@ -489,7 +613,11 @@ export async function analyzeJournalForLanguagePush(
     }
   }
 
-  const langsToRun = enabledLangs.filter((lang) => (eligibleByLang.get(lang)?.length ?? 0) > 0)
+  const langsToRun = enabledLangs.filter((lang) => {
+    const hasNewEntries = (eligibleByLang.get(lang)?.length ?? 0) > 0
+    const canMineCorpus = Boolean(input.allowCorpusOnlyMine) && (highFreqByLang.get(lang)?.length ?? 0) > 0
+    return hasNewEntries || canMineCorpus
+  })
   const totalUniqueEligible = new Set(langsToRun.flatMap((l) => eligibleByLang.get(l)!.map((e) => e.id))).size
 
   if (langsToRun.length === 0) {
@@ -526,7 +654,10 @@ export async function analyzeJournalForLanguagePush(
       const res = await runSingleLanguageExtraction({
         lang,
         logicalDate: input.logicalDate,
+        sourceKind,
         eligible: langEligible,
+        highFreqTerms: highFreqByLang.get(lang) ?? [],
+        familiarity: input.familiarityByLang?.[lang],
         config: input.config,
         resolvedModel: input.resolvedModel,
         callLlm,

@@ -167,13 +167,34 @@ test('language-push-service: strictly strips private entries and scrubs secrets 
     assert.equal(second.ok, true)
     assert.equal(sentPrompts.length, 2, 'idempotent re-run must not re-call LLM for already processed entries')
 
-    // Card decision updates overview immediately
+    // Card familiarity decision updates overview immediately & feeds next extraction prompt
     const jaCard = res.overview.todayCards.find((c) => c.lang === 'ja')
     assert.ok(jaCard)
-    const pinRes = await service.decideCard(jaCard.id, 'pin')
-    assert.equal(pinRes.ok, true)
-    assert.equal(pinRes.card.pinned, true)
-    assert.equal(pinRes.overview.counts.pinnedTotal, 1)
+    const unfRes = await service.decideCard(jaCard.id, 'unfamiliar')
+    assert.equal(unfRes.ok, true)
+    assert.equal(unfRes.card.familiarity, 'unfamiliar')
+    assert.equal(unfRes.overview.counts.unfamiliarTotal, 1)
+
+    // Next day extraction injects both 7-day translated corpus high-freq candidates and familiarity history
+    journalByDate['2026-11-24'] = {
+      entries: [
+        {
+          id: 'je_pub_2',
+          date: '2026-11-24',
+          time: '11:00',
+          body: '今天继续优化模块解耦，希望架构更加稳健。',
+          category: '工程',
+          tags: [],
+          private: false,
+          provenance: 'human',
+        },
+      ],
+    }
+    const day2 = await service.runExtraction({ date: '2026-11-24' })
+    assert.equal(day2.ok, true)
+    const jaDay2Prompt = sentPrompts.slice(2).find((p) => p.includes('Target language: Japanese'))
+    assert.ok(jaDay2Prompt, 'expected JA prompt on day 2')
+    assert.ok(jaDay2Prompt.includes('疎結合'), 'day 2 prompt must inject unfamiliar familiarity history & 7-day corpus terms')
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
   }
@@ -195,9 +216,14 @@ test('registerLanguagePushIpc: registers 5 channels lazily and cleans up cleanly
 
   let getterCount = 0
   const fakeService = {
-    getOverview: () => ({ todayCards: [] }),
+    getOverview: (date) => ({ todayCards: [], ...(typeof date === 'string' ? { selectedDate: date } : {}) }),
     runExtraction: (opts) => ({ ok: true, opts }),
-    decideCard: (id, action) => ({ ok: true, id, action }),
+    decideCard: (id, action, date) => ({
+      ok: true,
+      id,
+      action,
+      ...(typeof date === 'string' ? { date } : {}),
+    }),
     getConfig: () => ({ dailyLimit: 8 }),
     saveConfig: (patch) => ({ dailyLimit: 8, ...patch }),
     speak: (input) => ({ ok: true, input }),
@@ -212,12 +238,117 @@ test('registerLanguagePushIpc: registers 5 channels lazily and cleans up cleanly
   assert.deepEqual(handlers.get(DESKTOP_INVOKE_CHANNELS.decideLanguagePushCard)({}, 'lp_1', 'invalid_action'), {
     ok: true,
     id: 'lp_1',
-    action: 'later',
+    action: 'fuzzy',
   })
-  assert.equal(getterCount, 1)
+  assert.deepEqual(handlers.get(DESKTOP_INVOKE_CHANNELS.getLanguagePushOverview)({}, '2026-11-20'), {
+    todayCards: [],
+    selectedDate: '2026-11-20',
+  })
+  assert.deepEqual(handlers.get(DESKTOP_INVOKE_CHANNELS.getLanguagePushOverview)({}, 42), {
+    todayCards: [],
+  })
+  assert.deepEqual(
+    handlers.get(DESKTOP_INVOKE_CHANNELS.decideLanguagePushCard)({}, 'lp_9', 'familiar', '2026-11-20'),
+    { ok: true, id: 'lp_9', action: 'familiar', date: '2026-11-20' },
+  )
+  assert.deepEqual(handlers.get(DESKTOP_INVOKE_CHANNELS.decideLanguagePushCard)({}, 'lp_9', 'familiar', 42), {
+    ok: true,
+    id: 'lp_9',
+    action: 'familiar',
+  })
+  assert.equal(getterCount, 5)
   dispose()
   assert.equal(handlers.size, 0)
   assert.equal(removed.length, 6)
+})
+
+test('language-push date archive: getOverview(date) and decideCard(id, action, pastDate) keep selectedDate', async () => {
+  const { LanguagePushService } = loadTsModule(resolve(rootDir, 'electron/desk/language-push-service.ts'))
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-date-svc-'))
+
+  try {
+    const service = new LanguagePushService({
+      journalStore: {
+        getConfig: () => ({ deskRoot: tempRoot }),
+        getDay: async (date) => ({ ok: true, date, filePath: '', entries: [] }),
+      },
+      settingsStore: {
+        resolve: () => ({ apiKey: 'k', authToken: '', baseUrl: '', model: 'm', configSource: 'settings' }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p', providers: [{ id: 'p', name: 'P', model: 'm' }] } }),
+      },
+      now: () => new Date('2026-11-24T06:00:00Z'),
+    })
+
+    await service.store.mergeExtractionResult({
+      logicalDate: '2026-11-20',
+      providerName: 'Test',
+      modelUsed: 'test-model',
+      processedEntryIds: ['e1:en', 'e1:ja'],
+      corpusItems: [
+        { entryId: 'e1', sourceDate: '2026-11-20', lang: 'en', translatedText: 'Archived note from Nov 20.' },
+      ],
+      candidates: [
+        {
+          lang: 'en',
+          kind: 'vocab',
+          surface: 'resilient',
+          reading: '/rɪˈzɪliənt/',
+          meaning: '有韧性的',
+          levelTag: 'B2',
+          exampleSentence: 'A resilient layout survives window resizing.',
+          exampleTranslation: '有韧性的布局经得起窗口缩放。',
+          sourceDate: '2026-11-20',
+          sourceEntryId: 'e1',
+        },
+        {
+          lang: 'ja',
+          kind: 'grammar',
+          surface: 'にもかかわらず',
+          reading: 'にもかかわらず',
+          meaning: '尽管',
+          levelTag: 'N2',
+          exampleSentence: '忙しいにもかかわらず続けた。',
+          exampleTranslation: '尽管很忙还是继续了。',
+          sourceDate: '2026-11-20',
+          sourceEntryId: 'e1',
+        },
+      ],
+      statsBase: { scannedEntries: 1, eligibleEntries: 1, skippedPrivate: 0, skippedAlreadyProcessed: 0, durationMs: 10 },
+    })
+
+    const past = service.getOverview('2026-11-20')
+    assert.equal(past.selectedDate, '2026-11-20')
+    assert.equal(past.todayDate, '2026-11-24')
+    assert.equal(past.todayCards.length, 2)
+    assert.equal(past.counts.todayTotal, 2)
+    assert.equal(past.counts.todayVocab, 1)
+    assert.equal(past.counts.todayGrammar, 1)
+    const marker = past.calendarMarkers.find((item) => item.date === '2026-11-20')
+    assert.ok(marker)
+    assert.equal(marker.cardCount, 2)
+    assert.equal(marker.hasRun, true)
+    assert.equal(marker.hasCorpus, true)
+    const markerDates = past.calendarMarkers.map((item) => item.date)
+    assert.deepEqual(markerDates, [...markerDates].sort())
+
+    const grammar = past.todayCards.find((card) => card.kind === 'grammar')
+    assert.ok(grammar)
+    const decided = await service.decideCard(grammar.id, 'unfamiliar', '2026-11-20')
+    assert.equal(decided.ok, true)
+    assert.equal(decided.overview.selectedDate, '2026-11-20')
+    assert.equal(decided.overview.todayDate, '2026-11-24')
+    assert.equal(decided.overview.todayCards[0]?.id, grammar.id)
+    assert.equal(decided.overview.todayCards.some((card) => card.surface === 'resilient'), true)
+    assert.equal(decided.overview.counts.backlogTotal, service.getOverview().counts.backlogTotal)
+    assert.equal(decided.overview.counts.masteredTotal, service.getOverview().counts.masteredTotal)
+    assert.equal(decided.overview.counts.corpusDaysCount, service.getOverview().counts.corpusDaysCount)
+
+    const invalid = service.getOverview('not-a-date')
+    assert.equal(invalid.selectedDate, '2026-11-24')
+    assert.equal(invalid.todayDate, '2026-11-24')
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
 })
 
 test('language-push host wiring, single-line main.ts IPC delegation, and 1:1 zh/en locale parity', () => {

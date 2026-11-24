@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { IconInline } from '../../icon-inline'
 import { useI18n } from '../../i18n/i18n'
 import {
-  LANGUAGE_PUSH_REVIEW_INTERVAL_DAYS,
+  LANGUAGE_PUSH_FUZZY_INTERVAL_DAYS,
   type LanguagePushCard,
   type LanguagePushDecisionAction,
 } from '../../language-push-contract'
@@ -23,9 +23,9 @@ export type LanguageCardProps = {
   onNavigateToJournalAnchor?: (date: string, entryId: string) => void
 }
 
-function nextIntervalDays(exposures: number): number {
-  const idx = Math.min(Math.max(0, Math.floor(exposures)), LANGUAGE_PUSH_REVIEW_INTERVAL_DAYS.length - 1)
-  return LANGUAGE_PUSH_REVIEW_INTERVAL_DAYS[idx]
+function nextFuzzyIntervalDays(exposures: number): number {
+  const idx = Math.min(Math.max(0, Math.floor(exposures)), LANGUAGE_PUSH_FUZZY_INTERVAL_DAYS.length - 1)
+  return LANGUAGE_PUSH_FUZZY_INTERVAL_DAYS[idx]
 }
 
 export function LanguageCard({
@@ -45,7 +45,7 @@ export function LanguageCard({
   const exampleKey = `${card.id}:example`
   const isSpeakingTerm = speakingKey === termKey
   const isSpeakingExample = speakingKey === exampleKey
-  const nextDays = nextIntervalDays(card.exposures)
+  const nextFuzzyDays = nextFuzzyIntervalDays(card.exposures)
   const jaHints =
     card.lang === 'ja'
       ? [
@@ -56,12 +56,14 @@ export function LanguageCard({
 
   const cardClasses = [
     'lp-card',
-    card.pinned ? 'lp-card-pinned' : '',
+    card.familiarity === 'unfamiliar' ? 'lp-card-unfamiliar' : '',
     card.status === 'mastered' ? 'lp-card-mastered' : '',
     isPlaylistActive ? 'lp-card-playing' : '',
   ]
     .filter(Boolean)
     .join(' ')
+
+  const freqCount = Math.max(card.seenDays, card.corpusFreq ?? 1)
 
   return (
     <article ref={cardRef} className={cardClasses}>
@@ -71,7 +73,15 @@ export function LanguageCard({
           {card.kind === 'grammar' ? t('languagePush.kindGrammar') : t('languagePush.kindVocab')}
         </span>
         {card.levelTag ? <span className="lp-chip lp-chip-level">{card.levelTag}</span> : null}
-        {card.pinned ? <span className="lp-pin-mark">{t('languagePush.pinnedBadge')}</span> : null}
+        {card.isExpansion ? <span className="lp-chip lp-chip-expansion">{t('languagePush.expansionBadge')}</span> : null}
+        {freqCount >= 2 ? (
+          <span className="lp-chip lp-chip-freq">{t('languagePush.freqBadge', { count: freqCount })}</span>
+        ) : null}
+        {card.familiarity === 'unfamiliar' ? (
+          <span className="lp-fam-mark lp-fam-mark-unfamiliar">{t('languagePush.familiarityUnfamiliar')}</span>
+        ) : card.familiarity === 'fuzzy' ? (
+          <span className="lp-fam-mark lp-fam-mark-fuzzy">{t('languagePush.familiarityFuzzy')}</span>
+        ) : null}
         <span className="lp-meta">
           {card.exposures > 0
             ? t('languagePush.reviewCount', { count: card.exposures })
@@ -144,7 +154,7 @@ export function LanguageCard({
         ) : null}
       </div>
 
-      <div className="lp-actions">
+      <div className="lp-actions lp-actions-rating" role="group" aria-label={t('languagePush.ratingGroupLabel')}>
         {card.status === 'mastered' ? (
           <button
             type="button"
@@ -159,32 +169,39 @@ export function LanguageCard({
           <>
             <button
               type="button"
-              className="lp-btn lp-btn-master"
+              className={
+                card.familiarity === 'unfamiliar'
+                  ? 'lp-btn lp-btn-rating lp-btn-unfamiliar lp-btn-rating-selected'
+                  : 'lp-btn lp-btn-rating lp-btn-unfamiliar'
+              }
               disabled={busy}
-              onClick={() => onDecide(card.id, 'master')}
+              title={t('languagePush.unfamiliarHint')}
+              onClick={() => onDecide(card.id, 'unfamiliar')}
+            >
+              <span>{t('languagePush.actionUnfamiliar')}</span>
+            </button>
+            <button
+              type="button"
+              className={
+                card.familiarity === 'fuzzy'
+                  ? 'lp-btn lp-btn-rating lp-btn-fuzzy lp-btn-rating-selected'
+                  : 'lp-btn lp-btn-rating lp-btn-fuzzy'
+              }
+              disabled={busy}
+              title={t('languagePush.fuzzyHint', { days: nextFuzzyDays })}
+              onClick={() => onDecide(card.id, 'fuzzy')}
+            >
+              <span>{t('languagePush.actionFuzzy')}</span>
+            </button>
+            <button
+              type="button"
+              className="lp-btn lp-btn-rating lp-btn-familiar"
+              disabled={busy}
+              title={t('languagePush.familiarHint')}
+              onClick={() => onDecide(card.id, 'familiar')}
             >
               <IconInline name="check" />
-              <span>{t('languagePush.actionMaster')}</span>
-            </button>
-            <button
-              type="button"
-              className={card.pinned ? 'lp-btn lp-btn-pinned' : 'lp-btn'}
-              disabled={busy}
-              aria-pressed={card.pinned}
-              onClick={() => onDecide(card.id, card.pinned ? 'unpin' : 'pin')}
-            >
-              <IconInline name="pin" />
-              <span>{card.pinned ? t('languagePush.actionUnpin') : t('languagePush.actionPin')}</span>
-            </button>
-            <button
-              type="button"
-              className="lp-btn lp-btn-later"
-              disabled={busy}
-              title={t('languagePush.laterHint', { days: nextDays })}
-              onClick={() => onDecide(card.id, 'later')}
-            >
-              <IconInline name="refresh" />
-              <span>{t('languagePush.actionLater', { days: nextDays })}</span>
+              <span>{t('languagePush.actionFamiliar')}</span>
             </button>
           </>
         )}

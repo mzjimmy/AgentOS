@@ -12,7 +12,7 @@ import type {
 } from '../../src/language-push-contract'
 import type { LanguagePushService } from './language-push-service'
 
-const VALID_ACTIONS = new Set<LanguagePushDecisionAction>(['master', 'pin', 'unpin', 'later', 'restore'])
+const VALID_ACTIONS = new Set<LanguagePushDecisionAction>(['unfamiliar', 'fuzzy', 'familiar', 'restore'])
 
 export function registerLanguagePushIpc(
   ipcMain: IpcMain,
@@ -20,7 +20,9 @@ export function registerLanguagePushIpc(
 ): () => void {
   const resolveService = typeof serviceOrGetter === 'function' ? serviceOrGetter : () => serviceOrGetter
 
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getLanguagePushOverview, () => resolveService().getOverview())
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getLanguagePushOverview, (_event, date?: unknown) =>
+    resolveService().getOverview(typeof date === 'string' ? date : undefined),
+  )
   ipcMain.handle(DESKTOP_INVOKE_CHANNELS.runLanguagePush, (_event, options?: unknown) => {
     const safe = options && typeof options === 'object' ? (options as { date?: unknown; force?: unknown }) : {}
     return resolveService().runExtraction({
@@ -28,12 +30,19 @@ export function registerLanguagePushIpc(
       force: safe.force === true,
     })
   })
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.decideLanguagePushCard, (_event, cardId: unknown, action: unknown) => {
-    const normalizedAction = VALID_ACTIONS.has(action as LanguagePushDecisionAction)
-      ? (action as LanguagePushDecisionAction)
-      : 'later'
-    return resolveService().decideCard(String(cardId), normalizedAction)
-  })
+  ipcMain.handle(
+    DESKTOP_INVOKE_CHANNELS.decideLanguagePushCard,
+    (_event, cardId: unknown, action: unknown, date?: unknown) => {
+      const normalizedAction = VALID_ACTIONS.has(action as LanguagePushDecisionAction)
+        ? (action as LanguagePushDecisionAction)
+        : 'fuzzy'
+      return resolveService().decideCard(
+        String(cardId),
+        normalizedAction,
+        typeof date === 'string' ? date : undefined,
+      )
+    },
+  )
   ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getLanguagePushConfig, () => resolveService().getConfig())
   ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveLanguagePushConfig, (_event, patch: unknown) =>
     resolveService().saveConfig((patch && typeof patch === 'object' ? patch : {}) as Partial<LanguagePushConfig>),

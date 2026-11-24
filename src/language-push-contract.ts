@@ -4,8 +4,11 @@
  * Design invariants:
  * - Background translated corpus is archived locally under `<deskRoot>/language/corpus/`
  *   and is NEVER dumped as full translated articles on the UI.
+ * - Multi-source corpus ready: `sourceKind` defaults to `'journal'` today and leaves an
+ *   extensible slot for future Desk sources (e.g. Morning Brief / 早报).
  * - Foreground UI only surfaces threshold-filtered vocab & grammar interactive cards
- *   (default 8/day: 6 vocab + 2 grammar) across EN + JA with 1-click feedback & offline TTS.
+ *   (default 8/day: 6 vocab + 2 grammar) across EN + JA with 3-tier familiarity rating
+ *   (陌生 / 模糊 / 熟悉) & offline/MiniMax TTS.
  * - Hard privacy filter (`isPrivateJournalEntry` + `scrubSecrets`) intercepts private
  *   journal entries before any cloud call or corpus persistence.
  */
@@ -18,23 +21,41 @@ export type LanguagePushLang = (typeof LANGUAGE_PUSH_SUPPORTED_LANGS)[number]
 export const LANGUAGE_PUSH_CARD_KINDS = ['vocab', 'grammar'] as const
 export type LanguagePushCardKind = (typeof LANGUAGE_PUSH_CARD_KINDS)[number]
 
-export type LanguagePushCardStatus = 'active' | 'mastered'
+/**
+ * Extensible corpus source identifier.
+ * Today only `'journal'` is wired; future Desk windows (e.g. `'morning_brief'`) can
+ * register a `LanguagePushCorpusProvider` without changing storage or UI contracts.
+ */
+export type LanguagePushCorpusSourceKind = 'journal' | (string & {})
+export const LANGUAGE_PUSH_DEFAULT_SOURCE_KIND: LanguagePushCorpusSourceKind = 'journal'
+
+export type LanguagePushCardStatus = 'active' | 'mastered' | 'archived'
+
+/** 3-tier user familiarity rating: 陌生 / 模糊 / 熟悉 */
+export const LANGUAGE_PUSH_FAMILIARITY_LEVELS = ['unfamiliar', 'fuzzy', 'familiar'] as const
+export type LanguagePushFamiliarity = (typeof LANGUAGE_PUSH_FAMILIARITY_LEVELS)[number]
 
 export type LanguagePushEnLevel = '1500' | '3000' | '5000'
 export type LanguagePushJaLevel = 'N4' | 'N3' | 'N2' | 'N1'
 
-export type LanguagePushDecisionAction = 'master' | 'pin' | 'unpin' | 'later' | 'restore'
+export type LanguagePushDecisionAction = 'unfamiliar' | 'fuzzy' | 'familiar' | 'restore'
 
 export type LanguagePushRunState = 'idle' | 'running' | 'needs_config' | 'error'
 
-/** SRS intervals in days ported from SentinelLab vocabulary-review.ts */
-export const LANGUAGE_PUSH_REVIEW_INTERVAL_DAYS = [1, 2, 4, 7, 15, 30] as const
+/** SRS intervals in days for "模糊" (fuzzy) progression. "陌生" always schedules +1 day. */
+export const LANGUAGE_PUSH_FUZZY_INTERVAL_DAYS = [3, 7, 14, 30] as const
+export const LANGUAGE_PUSH_UNFAMILIAR_INTERVAL_DAYS = 1
+
+/** @deprecated Kept as alias for backward compatibility with older tests/imports. */
+export const LANGUAGE_PUSH_REVIEW_INTERVAL_DAYS = LANGUAGE_PUSH_FUZZY_INTERVAL_DAYS
 
 export const LANGUAGE_PUSH_DEFAULT_CUTOVER_HOUR = 4
 export const LANGUAGE_PUSH_DEFAULT_DAILY_LIMIT = 8
 export const LANGUAGE_PUSH_DEFAULT_VOCAB_LIMIT = 6
 export const LANGUAGE_PUSH_DEFAULT_GRAMMAR_LIMIT = 2
-export const LANGUAGE_PUSH_NEW_CARD_DAILY_CAP = 12
+export const LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS = 7
+export const LANGUAGE_PUSH_DEFAULT_BACKLOG_CAP = 40
+export const LANGUAGE_PUSH_STALE_ARCHIVE_DAYS = 14
 export const LANGUAGE_PUSH_DEFAULT_TTS_MODEL = 'speech-2.8-hd'
 export const LANGUAGE_PUSH_DEFAULT_VOICE_EN = 'English_Graceful_Lady'
 export const LANGUAGE_PUSH_DEFAULT_VOICE_JA = 'Japanese_KindLady'
@@ -71,6 +92,8 @@ export type LanguagePushConfig = {
   dailyGrammarLimit: number
   enLevel: LanguagePushEnLevel
   jaLevel: LanguagePushJaLevel
+  corpusWindowDays: number
+  backlogCap: number
   cutoverHour: number
   autoRunEnabled: boolean
   speechRate: number
@@ -87,6 +110,8 @@ export const LANGUAGE_PUSH_DEFAULT_CONFIG: LanguagePushConfig = {
   dailyGrammarLimit: LANGUAGE_PUSH_DEFAULT_GRAMMAR_LIMIT,
   enLevel: '1500',
   jaLevel: 'N3',
+  corpusWindowDays: LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS,
+  backlogCap: LANGUAGE_PUSH_DEFAULT_BACKLOG_CAP,
   cutoverHour: LANGUAGE_PUSH_DEFAULT_CUTOVER_HOUR,
   autoRunEnabled: true,
   speechRate: 0.95,
@@ -106,6 +131,7 @@ export type LanguagePushExample = {
   translation: string
   sourceDate: string
   sourceEntryId: string
+  sourceKind?: LanguagePushCorpusSourceKind
   pronunciations?: LanguagePushPronunciationHint[]
 }
 
@@ -122,11 +148,18 @@ export type LanguagePushCard = {
   levelTag: string | null
   example: LanguagePushExample
   status: LanguagePushCardStatus
-  pinned: boolean
+  familiarity?: LanguagePushFamiliarity | null
+  lastRatedAt?: string | null
+  corpusFreq?: number
+  isExpansion?: boolean
+  /** @deprecated Legacy field retained as optional for old deck.json compatibility. */
+  pinned?: boolean
   exposures: number
   seenDays: number
   firstSeenDate: string
   lastSeenDate: string
+  /** Logical extraction date when this card was added to the deck (for archive date lookup). */
+  extractedDate?: string
   dueAt: string
   lastShownAt: string | null
   createdAt: string
@@ -140,6 +173,7 @@ export type LanguagePushCard = {
 export type LanguagePushCorpusItem = {
   entryId: string
   sourceDate: string
+  sourceKind?: LanguagePushCorpusSourceKind
   lang: LanguagePushLang
   translatedText: string
   createdAt: string
@@ -153,6 +187,7 @@ export type LanguagePushRunStats = {
   corpusArchivedCount: number
   addedCards: number
   updatedCards: number
+  archivedOverflow?: number
   filteredBelowThreshold: number
   skippedMastered: number
   durationMs: number
@@ -174,13 +209,27 @@ export type LanguagePushOverviewCounts = {
   todayVocab: number
   todayGrammar: number
   backlogTotal: number
-  pinnedTotal: number
+  backlogCap: number
+  unfamiliarTotal: number
+  fuzzyTotal: number
   masteredTotal: number
+  archivedTotal: number
   corpusDaysCount: number
+}
+
+export type LanguagePushCalendarDay = {
+  date: string
+  cardCount: number
+  hasRun: boolean
+  hasCorpus: boolean
 }
 
 export type LanguagePushOverview = {
   todayDate: string
+  /** Currently viewed logical date (YYYY-MM-DD); equals `todayDate` when omitted. */
+  selectedDate: string
+  /** Archive/activity calendar markers across all dates with cards, runs, or corpus. */
+  calendarMarkers: LanguagePushCalendarDay[]
   todayCards: LanguagePushCard[]
   backlogCards: LanguagePushCard[]
   masteredCards: LanguagePushCard[]

@@ -2,9 +2,9 @@
  * Local Zero-DB file persistence for SentinelDesk Language Push.
  *
  * Storage layout under `<deskRoot>/language/`:
- * - `config.json` — languages, difficulty thresholds, daily caps, modelPick
- * - `deck.json` — canonical cards + `processedEntryIds` for idempotent re-runs
- * - `corpus/YYYY/MM/YYYY-MM-DD.json` — silent background translated corpus archive (private-free)
+ * - `config.json` — languages, difficulty thresholds, daily caps, 7-day corpus window, backlog cap, modelPick
+ * - `deck.json` — canonical cards + familiarity ratings + `processedEntryIds` for idempotent re-runs
+ * - `corpus/YYYY/MM/YYYY-MM-DD.json` — silent background translated corpus archive (private-free, multi-source ready)
  * - `runs/YYYY-MM-DD.json` — daily extraction run metadata
  */
 
@@ -12,12 +12,17 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
+  LANGUAGE_PUSH_DEFAULT_BACKLOG_CAP,
   LANGUAGE_PUSH_DEFAULT_CONFIG,
+  LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS,
+  LANGUAGE_PUSH_DEFAULT_SOURCE_KIND,
   LANGUAGE_PUSH_SUPPORTED_LANGS,
+  type LanguagePushCalendarDay,
   type LanguagePushCard,
   type LanguagePushCardKind,
   type LanguagePushConfig,
   type LanguagePushCorpusItem,
+  type LanguagePushCorpusSourceKind,
   type LanguagePushDecisionAction,
   type LanguagePushEnLevel,
   type LanguagePushJaLevel,
@@ -26,21 +31,24 @@ import {
   type LanguagePushRunSnapshot,
   type LanguagePushRunState,
 } from '../../src/language-push-contract'
-import { getShanghaiLogicalDay } from './intent-todo-time'
+import { getShanghaiLogicalDay, shiftDateString } from './intent-todo-time'
+import type { LanguagePushFamiliaritySummary } from './language-push-analyzer'
 import {
   buildDailyQueue,
   isBelowDifficultyThreshold,
   normalizeCanonicalKey,
   normalizeReadingKey,
+  pruneActiveBacklog,
   scheduleNextReview,
 } from './language-push-scheduler'
 
-const DECK_SCHEMA_VERSION = 1
+const DECK_SCHEMA_VERSION = 2
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 type LanguagePushDeckFile = {
   version: number
   cards: Record<string, LanguagePushCard>
-  /** Maps `<entryId>` -> logicalDate when already extracted (prevents duplicate cloud extraction). */
+  /** Maps `<entryId>:<lang>` -> logicalDate when already extracted (prevents duplicate cloud extraction). */
   processedEntryIds: Record<string, string>
 }
 
@@ -57,6 +65,9 @@ export type LanguagePushCandidateInput = {
   examplePronunciations?: Array<{ surface: string; reading: string }>
   sourceDate: string
   sourceEntryId: string
+  sourceKind?: LanguagePushCorpusSourceKind
+  corpusFreq?: number
+  isExpansion?: boolean
 }
 
 export type MergeLanguageExtractionInput = {
@@ -110,6 +121,16 @@ function normalizeConfig(raw: unknown): LanguagePushConfig {
     ? obj.jaLevel
     : base.jaLevel
 
+  const corpusWindowDays =
+    typeof obj.corpusWindowDays === 'number' && Number.isFinite(obj.corpusWindowDays)
+      ? Math.max(3, Math.min(30, Math.floor(obj.corpusWindowDays)))
+      : LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS
+
+  const backlogCap =
+    typeof obj.backlogCap === 'number' && Number.isFinite(obj.backlogCap)
+      ? Math.max(15, Math.min(120, Math.floor(obj.backlogCap)))
+      : LANGUAGE_PUSH_DEFAULT_BACKLOG_CAP
+
   const cutoverHour = typeof obj.cutoverHour === 'number' && Number.isFinite(obj.cutoverHour)
     ? Math.max(0, Math.min(12, Math.floor(obj.cutoverHour)))
     : base.cutoverHour
@@ -142,6 +163,8 @@ function normalizeConfig(raw: unknown): LanguagePushConfig {
     dailyGrammarLimit,
     enLevel,
     jaLevel,
+    corpusWindowDays,
+    backlogCap,
     cutoverHour,
     autoRunEnabled: typeof obj.autoRunEnabled === 'boolean' ? obj.autoRunEnabled : base.autoRunEnabled,
     speechRate,
@@ -155,6 +178,26 @@ function normalizeConfig(raw: unknown): LanguagePushConfig {
 function makeCardId(lang: LanguagePushLang, kind: LanguagePushCardKind, wordKey: string): string {
   const digest = createHash('sha1').update(`${lang}:${kind}:${wordKey}`).digest('hex').slice(0, 10)
   return `lp_${lang}_${kind}_${digest}`
+}
+
+function cardTouchesDate(card: LanguagePushCard, date: string): boolean {
+  return (
+    card.firstSeenDate === date ||
+    card.lastSeenDate === date ||
+    card.extractedDate === date ||
+    card.example?.sourceDate === date ||
+    card.lastRatedAt === date
+  )
+}
+
+/** Unfamiliar and still-active cards first, then vocab before grammar, then id. */
+function compareHistoricalCards(a: LanguagePushCard, b: LanguagePushCard): number {
+  const unfamiliarDelta = Number(b.familiarity === 'unfamiliar') - Number(a.familiarity === 'unfamiliar')
+  if (unfamiliarDelta !== 0) return unfamiliarDelta
+  const activeDelta = Number(b.status === 'active') - Number(a.status === 'active')
+  if (activeDelta !== 0) return activeDelta
+  if (a.kind !== b.kind) return a.kind === 'vocab' ? -1 : 1
+  return a.id.localeCompare(b.id)
 }
 
 export class LanguagePushStore {
@@ -241,6 +284,80 @@ export class LanguagePushStore {
     return { ...this.readDeckSync().processedEntryIds }
   }
 
+  /**
+   * Reads archived translated corpus items across the recent `windowDays` (default 7 days).
+   * Multi-source ready: preserves `sourceKind` (defaults to `'journal'` for legacy files).
+   */
+  readRecentCorpusItems(logicalDate: string, windowDays: number): LanguagePushCorpusItem[] {
+    const days = Math.max(1, Math.min(30, Math.floor(windowDays || LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS)))
+    const collected: LanguagePushCorpusItem[] = []
+    for (let offset = 0; offset < days; offset += 1) {
+      const date = shiftDateString(logicalDate, -offset)
+      const corpusPath = this.getCorpusPath(date)
+      if (!existsSync(corpusPath)) continue
+      try {
+        const parsed = JSON.parse(readFileSync(corpusPath, 'utf8')) as { items?: LanguagePushCorpusItem[] }
+        if (!Array.isArray(parsed.items)) continue
+        for (const item of parsed.items) {
+          if (!item || typeof item !== 'object' || !item.translatedText?.trim()) continue
+          collected.push({
+            ...item,
+            sourceKind: item.sourceKind ?? LANGUAGE_PUSH_DEFAULT_SOURCE_KIND,
+          })
+        }
+      } catch {
+        /* ignore corrupt corpus day */
+      }
+    }
+    return collected
+  }
+
+  /**
+   * Builds a compact per-language familiarity profile from the user's rating history
+   * to steer subsequent extractions and expand related expressions.
+   */
+  buildFamiliarityProfileByLang(): Record<LanguagePushLang, LanguagePushFamiliaritySummary> {
+    const deck = this.readDeckSync()
+    const cards = Object.values(deck.cards).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+
+    const result: Record<LanguagePushLang, LanguagePushFamiliaritySummary> = {
+      en: { unfamiliar: [], fuzzy: [], familiar: [], excludedWordKeys: new Set<string>() },
+      ja: { unfamiliar: [], fuzzy: [], familiar: [], excludedWordKeys: new Set<string>() },
+    }
+
+    for (const card of cards) {
+      const bucket = result[card.lang]
+      if (!bucket) continue
+      if (card.status === 'mastered' || card.status === 'active') {
+        bucket.excludedWordKeys.add(card.wordKey)
+      }
+      if (card.status === 'mastered' || card.familiarity === 'familiar') {
+        if (bucket.familiar.length < 15) bucket.familiar.push(card.surface)
+      } else if (card.status === 'active' && card.familiarity === 'unfamiliar') {
+        if (bucket.unfamiliar.length < 10) {
+          bucket.unfamiliar.push({ surface: card.surface, kind: card.kind, meaning: card.meaning })
+        }
+      } else if (card.status === 'active' && card.familiarity === 'fuzzy') {
+        if (bucket.fuzzy.length < 8) {
+          bucket.fuzzy.push({ surface: card.surface, kind: card.kind, meaning: card.meaning })
+        }
+      }
+    }
+
+    return result
+  }
+
+  getRunSnapshot(logicalDate: string): LanguagePushRunSnapshot | null {
+    if (!ISO_DATE_RE.test(logicalDate)) return null
+    const p = this.getRunPath(logicalDate)
+    if (!existsSync(p)) return null
+    try {
+      return JSON.parse(readFileSync(p, 'utf8')) as LanguagePushRunSnapshot
+    } catch {
+      return null
+    }
+  }
+
   getLatestRunSnapshot(): LanguagePushRunSnapshot | null {
     const runsDir = path.join(this.getLanguageRoot(), 'runs')
     if (!existsSync(runsDir)) return null
@@ -298,15 +415,16 @@ export class LanguagePushStore {
 
     const byKey = new Map<string, LanguagePushCorpusItem>()
     for (const item of existing) {
-      byKey.set(`${item.entryId}:${item.lang}`, item)
+      byKey.set(`${item.sourceKind ?? LANGUAGE_PUSH_DEFAULT_SOURCE_KIND}:${item.entryId}:${item.lang}`, item)
     }
     let added = 0
     for (const item of incoming) {
-      const key = `${item.entryId}:${item.lang}`
+      const sourceKind = item.sourceKind ?? LANGUAGE_PUSH_DEFAULT_SOURCE_KIND
+      const key = `${sourceKind}:${item.entryId}:${item.lang}`
       const text = item.translatedText.trim()
       if (!text) continue
       if (!byKey.has(key)) added += 1
-      byKey.set(key, { ...item, translatedText: text, createdAt: nowIso })
+      byKey.set(key, { ...item, sourceKind, translatedText: text, createdAt: nowIso })
     }
     writeJsonAtomic(corpusPath, {
       logicalDate,
@@ -319,6 +437,7 @@ export class LanguagePushStore {
   async mergeExtractionResult(input: MergeLanguageExtractionInput): Promise<{
     addedCards: number
     updatedCards: number
+    archivedOverflow: number
     filteredBelowThreshold: number
     skippedMastered: number
     corpusArchivedCount: number
@@ -363,7 +482,7 @@ export class LanguagePushStore {
         const bucketKey = `${raw.lang}:${raw.kind}:${wordKey}`
         const existingList = indexByKey.get(bucketKey) ?? []
 
-        // SentinelLab dedup rule: exact reading match or either side empty reading
+        // Canonical dedup rule: exact reading match or either side empty reading
         const matched =
           existingList.find((c) => c.readingKey === readingKey) ??
           existingList.find((c) => c.readingKey === '' || readingKey === '')
@@ -373,9 +492,17 @@ export class LanguagePushStore {
             skippedMastered += 1
             continue
           }
+          // Auto-revive previously archived cards if they recur in fresh corpus
+          if (matched.status === 'archived') {
+            matched.status = 'active'
+            matched.dueAt = input.logicalDate
+          }
           const isNewDay = matched.lastSeenDate !== raw.sourceDate
           matched.seenDays = isNewDay ? matched.seenDays + 1 : matched.seenDays
           matched.lastSeenDate = raw.sourceDate > matched.lastSeenDate ? raw.sourceDate : matched.lastSeenDate
+          if (typeof raw.corpusFreq === 'number' && raw.corpusFreq > (matched.corpusFreq ?? 0)) {
+            matched.corpusFreq = raw.corpusFreq
+          }
           if (!matched.reading && reading) {
             matched.reading = reading
             matched.readingKey = readingKey
@@ -409,17 +536,22 @@ export class LanguagePushStore {
             translation: (raw.exampleTranslation || '').trim(),
             sourceDate: raw.sourceDate || input.logicalDate,
             sourceEntryId: raw.sourceEntryId || '',
+            sourceKind: raw.sourceKind ?? LANGUAGE_PUSH_DEFAULT_SOURCE_KIND,
             pronunciations:
               raw.examplePronunciations && raw.examplePronunciations.length > 0
                 ? raw.examplePronunciations
                 : undefined,
           },
           status: 'active',
-          pinned: false,
+          familiarity: null,
+          lastRatedAt: null,
+          corpusFreq: raw.corpusFreq,
+          isExpansion: raw.isExpansion === true ? true : undefined,
           exposures: 0,
           seenDays: 1,
           firstSeenDate: raw.sourceDate || input.logicalDate,
           lastSeenDate: raw.sourceDate || input.logicalDate,
+          extractedDate: input.logicalDate,
           dueAt: input.logicalDate,
           lastShownAt: null,
           createdAt: nowIso,
@@ -435,6 +567,9 @@ export class LanguagePushStore {
         if (entryId) deck.processedEntryIds[entryId] = input.logicalDate
       }
 
+      // Anti-bloat guard: decay stale untouched cards & cap backlog pool
+      const archivedIds = pruneActiveBacklog(Object.values(deck.cards), input.logicalDate, config, nowIso)
+
       writeJsonAtomic(this.getDeckPath(), deck)
 
       const runSnapshot: LanguagePushRunSnapshot = {
@@ -448,6 +583,7 @@ export class LanguagePushStore {
           corpusArchivedCount,
           addedCards,
           updatedCards,
+          archivedOverflow: archivedIds.length,
           filteredBelowThreshold,
           skippedMastered,
         },
@@ -457,6 +593,7 @@ export class LanguagePushStore {
       return {
         addedCards,
         updatedCards,
+        archivedOverflow: archivedIds.length,
         filteredBelowThreshold,
         skippedMastered,
         corpusArchivedCount,
@@ -480,35 +617,38 @@ export class LanguagePushStore {
       const today = getShanghaiLogicalDay(nowDate, config.cutoverHour)
 
       switch (action) {
-        case 'master': {
-          card.status = 'mastered'
-          card.pinned = false
-          card.lastShownAt = today
-          card.updatedAt = nowIso
-          break
-        }
-        case 'pin': {
+        case 'unfamiliar': {
           card.status = 'active'
-          card.pinned = true
-          if (card.dueAt > today) card.dueAt = today
+          card.familiarity = 'unfamiliar'
+          card.exposures = 0
+          card.lastShownAt = today
+          card.lastRatedAt = today
+          card.dueAt = scheduleNextReview(0, today, 'unfamiliar')
           card.updatedAt = nowIso
           break
         }
-        case 'unpin': {
-          card.pinned = false
-          card.updatedAt = nowIso
-          break
-        }
-        case 'later': {
+        case 'fuzzy': {
           const prevExposures = card.exposures
+          card.status = 'active'
+          card.familiarity = 'fuzzy'
           card.exposures = prevExposures + 1
           card.lastShownAt = today
-          card.dueAt = scheduleNextReview(prevExposures, today)
+          card.lastRatedAt = today
+          card.dueAt = scheduleNextReview(prevExposures, today, 'fuzzy')
+          card.updatedAt = nowIso
+          break
+        }
+        case 'familiar': {
+          card.status = 'mastered'
+          card.familiarity = 'familiar'
+          card.lastShownAt = today
+          card.lastRatedAt = today
           card.updatedAt = nowIso
           break
         }
         case 'restore': {
           card.status = 'active'
+          card.familiarity = 'fuzzy'
           card.dueAt = today
           card.updatedAt = nowIso
           break
@@ -528,39 +668,131 @@ export class LanguagePushStore {
     return todayCards.length
   }
 
+  /**
+   * Dates that have at least one card touch, extraction run, or archived corpus file.
+   * A card counts once per date even if several of its date fields match that day.
+   */
+  listCalendarDays(): LanguagePushCalendarDay[] {
+    const byDate = new Map<string, { cardIds: Set<string>; hasRun: boolean; hasCorpus: boolean }>()
+    const ensure = (raw: string) => {
+      if (!ISO_DATE_RE.test(raw)) return null
+      let row = byDate.get(raw)
+      if (!row) {
+        row = { cardIds: new Set<string>(), hasRun: false, hasCorpus: false }
+        byDate.set(raw, row)
+      }
+      return row
+    }
+
+    for (const card of Object.values(this.readDeckSync().cards)) {
+      const touches = [
+        card.firstSeenDate,
+        card.lastSeenDate,
+        card.extractedDate,
+        card.example?.sourceDate,
+        card.lastRatedAt,
+      ]
+      for (const date of touches) {
+        if (!date) continue
+        ensure(date)?.cardIds.add(card.id)
+      }
+    }
+
+    const runsDir = path.join(this.getLanguageRoot(), 'runs')
+    if (existsSync(runsDir)) {
+      try {
+        for (const file of readdirSync(runsDir)) {
+          const match = /^(\d{4}-\d{2}-\d{2})\.json$/.exec(file)
+          if (!match) continue
+          const row = ensure(match[1])
+          if (row) row.hasRun = true
+        }
+      } catch {
+        /* ignore unreadable runs dir */
+      }
+    }
+
+    const corpusRoot = path.join(this.getLanguageRoot(), 'corpus')
+    if (existsSync(corpusRoot)) {
+      const walk = (dir: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name)
+          if (entry.isDirectory()) {
+            walk(full)
+            continue
+          }
+          if (!entry.isFile()) continue
+          const match = /^(\d{4}-\d{2}-\d{2})\.json$/.exec(entry.name)
+          if (!match) continue
+          const row = ensure(match[1])
+          if (row) row.hasCorpus = true
+        }
+      }
+      try {
+        walk(corpusRoot)
+      } catch {
+        /* ignore unreadable corpus tree */
+      }
+    }
+
+    return [...byDate.entries()]
+      .map(([date, row]) => ({
+        date,
+        cardCount: row.cardIds.size,
+        hasRun: row.hasRun,
+        hasCorpus: row.hasCorpus,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+  }
+
   buildOverview(params: {
     runState: LanguagePushRunState
     runError: string | null
     providerDisplay: { providerName: string; modelName: string; configured: boolean; ttsConfigured: boolean }
+    targetDate?: string
   }): LanguagePushOverview {
     const config = this.getConfig()
     const todayDate = getShanghaiLogicalDay(this.now(), config.cutoverHour)
+    const selectedDate = params.targetDate && ISO_DATE_RE.test(params.targetDate) ? params.targetDate : todayDate
     const deck = this.readDeckSync()
     const allCards = Object.values(deck.cards)
-    const { todayCards, backlogCards, masteredCards } = buildDailyQueue(allCards, todayDate, config)
+    const queued = buildDailyQueue(allCards, todayDate, config)
+    const todayCards =
+      selectedDate === todayDate
+        ? queued.todayCards
+        : allCards.filter((card) => cardTouchesDate(card, selectedDate)).sort(compareHistoricalCards)
 
     const todayVocab = todayCards.filter((c) => c.kind === 'vocab').length
     const todayGrammar = todayCards.filter((c) => c.kind === 'grammar').length
-    const pinnedTotal = allCards.filter((c) => c.status === 'active' && c.pinned).length
+    const unfamiliarTotal = allCards.filter((c) => c.status === 'active' && c.familiarity === 'unfamiliar').length
+    const fuzzyTotal = allCards.filter((c) => c.status === 'active' && c.familiarity === 'fuzzy').length
 
     return {
       todayDate,
+      selectedDate,
+      calendarMarkers: this.listCalendarDays(),
       todayCards,
-      backlogCards,
-      masteredCards,
+      backlogCards: queued.backlogCards,
+      masteredCards: queued.masteredCards,
       counts: {
         todayTotal: todayCards.length,
         todayVocab,
         todayGrammar,
-        backlogTotal: backlogCards.length,
-        pinnedTotal,
-        masteredTotal: masteredCards.length,
+        backlogTotal: queued.backlogCards.length,
+        backlogCap: config.backlogCap,
+        unfamiliarTotal,
+        fuzzyTotal,
+        masteredTotal: queued.masteredCards.length,
+        archivedTotal: queued.archivedCards.length,
         corpusDaysCount: this.countCorpusDays(),
       },
       config,
       runState: params.runState,
       runError: params.runError,
-      lastRun: this.getLatestRunSnapshot(),
+      lastRun:
+        selectedDate === todayDate
+          ? (this.getRunSnapshot(todayDate) ?? this.getLatestRunSnapshot())
+          : this.getRunSnapshot(selectedDate),
       providerDisplay: params.providerDisplay,
     }
   }
