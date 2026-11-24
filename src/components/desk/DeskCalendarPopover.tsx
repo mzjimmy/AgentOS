@@ -1,6 +1,8 @@
 /**
- * Shared editorial month/year archive calendar popover for SentinelDesk pinned views
- * (Timeline Journal & Intent Todo).
+ * Shared editorial month/year archive calendar popover for all SentinelDesk date-archived views.
+ * Consolidated from JournalCalendarPopover: rich day tooltips (count), 12-month day-count
+ * badges, and footer month stats activate whenever markers carry counts (e.g. Journal)
+ * while staying clean for count-free consumers (Intent Todo / Morning Brief / Outbound).
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -11,12 +13,12 @@ import {
   getMonthCalendarGrid,
   shiftYearMonth,
 } from '../journal/journal-ui-helpers'
+import {
+  summarizeDeskCalendarMonths,
+  type DeskCalendarDayMarker,
+} from './desk-date-framework-contract'
 
-export type DeskCalendarDayMarker = {
-  date: string
-  hasActivity: boolean
-  cleared?: boolean
-}
+export type { DeskCalendarDayMarker }
 
 export type DeskCalendarPopoverProps = {
   selectedDate: string
@@ -93,15 +95,7 @@ export function DeskCalendarPopover({
     return map
   }, [markers])
 
-  const activeMonths = useMemo(() => {
-    const set = new Set<string>()
-    for (const item of markers) {
-      if (item.hasActivity && item.date.length >= 7) {
-        set.add(item.date.slice(0, 7))
-      }
-    }
-    return set
-  }, [markers])
+  const monthSummaryMap = useMemo(() => summarizeDeskCalendarMonths(markers), [markers])
 
   const calendarCells = useMemo(
     () => getMonthCalendarGrid(viewYear, viewMonth),
@@ -109,6 +103,22 @@ export function DeskCalendarPopover({
   )
 
   const todayParts = useMemo(() => getJournalDateParts(todayDate), [todayDate])
+  const countBearing = useMemo(
+    () => markers.some((item) => item?.hasActivity && typeof item.count === 'number' && item.count > 0),
+    [markers],
+  )
+  const currentYmKey = `${viewYear}-${String(viewMonth).padStart(2, '0')}`
+  const currentMonthSummary = monthSummaryMap.get(currentYmKey)
+  const footerMeta = loading
+    ? t('journal.calendarLoading')
+    : !countBearing
+      ? null
+      : currentMonthSummary
+        ? t('journal.calendarMonthStats', {
+            days: currentMonthSummary.daysCount,
+            entries: currentMonthSummary.totalCount,
+          })
+        : t('journal.calendarMonthEmpty')
   const weekdayHeaders = locale === 'en' ? EN_WEEKDAY_HEADERS : ZH_WEEKDAY_HEADERS
   const monthLabels = locale === 'en' ? EN_MONTH_LABELS : ZH_MONTH_LABELS
 
@@ -177,21 +187,28 @@ export function DeskCalendarPopover({
           {monthLabels.map((label, idx) => {
             const monthNum = idx + 1
             const ymKey = `${viewYear}-${String(monthNum).padStart(2, '0')}`
-            const hasActivity = activeMonths.has(ymKey)
+            const activity = monthSummaryMap.get(ymKey)
             const isViewing = viewYear === initialParts.year && monthNum === initialParts.month
             const isTodayMonth = viewYear === todayParts.year && monthNum === todayParts.month
             return (
               <button
                 key={ymKey}
                 type="button"
-                className={`desk-calendar-month-cell${isViewing ? ' is-active' : ''}${isTodayMonth ? ' is-today' : ''}${hasActivity ? ' is-has-activity' : ''}`}
+                className={`desk-calendar-month-cell${isViewing ? ' is-active' : ''}${isTodayMonth ? ' is-today' : ''}${activity ? ' is-has-activity' : ''}`}
                 onClick={() => {
                   setViewMonth(monthNum)
                   setPickerMode('days')
                 }}
               >
                 <span className="desk-calendar-month-label">{label}</span>
-                {hasActivity ? <span className="desk-calendar-month-dot" aria-hidden="true" /> : null}
+                {activity ? (
+                  <span className="desk-calendar-month-badge">
+                    <span className="desk-calendar-month-dot" aria-hidden="true" />
+                    <span>{t('journal.calendarMonthDaysBadge', { days: activity.daysCount })}</span>
+                  </span>
+                ) : (
+                  <span className="desk-calendar-month-empty">—</span>
+                )}
               </button>
             )
           })}
@@ -209,19 +226,28 @@ export function DeskCalendarPopover({
           <div className="desk-calendar-days-grid">
             {calendarCells.map((cell) => {
               const marker = markerMap.get(cell.date)
+              const markerCount = typeof marker?.count === 'number' && marker.count > 0 ? marker.count : 0
+              const hasEntries = markerCount > 0
               const isSelected = cell.date === selectedDate
               const isToday = cell.date === todayDate
               const isFuture = disableFuture && cell.date > todayDate
+              const dayLabel = hasEntries
+                ? t('journal.calendarDayTooltip', { date: cell.date, count: markerCount })
+                : cell.date
               return (
                 <button
                   key={cell.date}
                   type="button"
                   disabled={isFuture}
-                  className={`desk-calendar-day-cell${cell.inCurrentMonth ? '' : ' is-outside'}${isSelected ? ' is-selected' : ''}${isToday ? ' is-today' : ''}${isFuture ? ' is-future' : ''}`}
+                  className={`desk-calendar-day-cell${cell.inCurrentMonth ? '' : ' is-outside'}${isSelected ? ' is-selected' : ''}${isToday ? ' is-today' : ''}${isFuture ? ' is-future' : ''}${hasEntries ? ' is-has-entries' : ''}`}
+                  aria-current={isSelected ? 'date' : undefined}
+                  aria-label={dayLabel}
+                  title={dayLabel}
                   onClick={() => {
                     if (isFuture) return
                     onSelectDate(cell.date)
                     onClose()
+                    anchorRef?.current?.focus()
                   }}
                 >
                   <span>{cell.day}</span>
@@ -238,15 +264,14 @@ export function DeskCalendarPopover({
       )}
 
       <div className="desk-calendar-footer">
-        <span className="desk-calendar-footer-meta">
-          {loading ? t('journal.loadingDay') : ''}
-        </span>
+        <span className="desk-calendar-footer-meta">{footerMeta}</span>
         <button
           type="button"
           className="desk-calendar-today-btn"
           onClick={() => {
             onSelectDate(todayDate)
             onClose()
+            anchorRef?.current?.focus()
           }}
         >
           {t('journal.jumpToday')}

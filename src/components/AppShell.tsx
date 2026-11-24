@@ -82,7 +82,8 @@ import {
 } from './chat/thread-chat-state-store'
 import { BrokerSnapshotStore } from './chat/broker-snapshot-source'
 import type { ProjectChatSnapshot } from '../project-chat-contract'
-import type { JournalDiscussTarget, JournalEntry } from '../journal-contract'
+import { DEFAULT_SENTINEL_DESK_ROOT, type JournalDiscussTarget, type JournalEntry } from '../journal-contract'
+import type { QuickCommandDispatchInput, QuickCommandDispatchResult } from '../quick-commands-contract'
 import { RuntimeOnboardingDialog } from './RuntimeOnboardingDialog'
 import { AgentOSPairingDialog } from './AgentOSPairingDialog'
 import { RuntimeWorkspace } from './RuntimeWorkspace'
@@ -2811,6 +2812,94 @@ export function AppShell() {
     ],
   )
 
+  const sendQuickCommandToTarget = useCallback(
+    async (input: QuickCommandDispatchInput): Promise<QuickCommandDispatchResult> => {
+      const text = input.body.trim()
+      if (!text) return { ok: false, error: t('quickCommands.blankBody') }
+
+      let targetProject: WorkspaceProject | undefined
+      if (input.target.kind === 'project') {
+        const requestedProjectId = input.target.projectId
+        const candidate = chatWorkspaceRef.current?.projects.find((p) => p.id === requestedProjectId)
+        if (candidate && !candidate.pathMissing) {
+          targetProject = candidate
+        }
+      } else {
+        const cfg = await window.desktop?.getJournalConfig?.().catch(() => undefined)
+        const rawDeskRoot = cfg?.deskRoot?.trim() || DEFAULT_SENTINEL_DESK_ROOT
+        const normalizedDesk = rawDeskRoot.replace(/[\\/]+$/, '')
+        const existingDesk = chatWorkspaceRef.current?.projects.find(
+          (p) => !p.pathMissing && p.path.replace(/[\\/]+$/, '') === normalizedDesk,
+        )
+        if (existingDesk) {
+          targetProject = existingDesk
+        } else {
+          const createdProject = await workspaceCommandClient.submit(
+            { type: 'project.create', name: 'SentinelDesk', path: normalizedDesk },
+            { preserveSelection: true },
+          )
+          if (createdProject.ok) {
+            targetProject = createdProject.workspace.projects.find(
+              (p) => p.path.replace(/[\\/]+$/, '') === normalizedDesk,
+            )
+          }
+        }
+      }
+
+      if (!targetProject) {
+        return { ok: false, error: t('quickCommands.sendNeedsProject') }
+      }
+
+      const threadTitle = input.title.trim() || '新对话'
+      if (projectChatReadinessRef.current !== 'legacy' && window.projectChat) {
+        const created = await window.projectChat.createThread({
+          projectId: targetProject.id,
+          title: threadTitle,
+          source: 'app-command',
+        })
+        if (!created.ok) {
+          return { ok: false, error: created.error.message || t('quickCommands.sendFailed') }
+        }
+        const submitted = await window.projectChat.submitRun({
+          projectId: targetProject.id,
+          threadId: created.value.threadId,
+          text,
+        })
+        if (!submitted.ok) {
+          return { ok: false, error: submitted.error.message || t('quickCommands.sendFailed') }
+        }
+        return {
+          ok: true,
+          projectId: targetProject.id,
+          projectName: targetProject.name,
+          threadId: created.value.threadId,
+        }
+      }
+
+      const threadId = createThreadInProject(targetProject.id, { activate: false, title: threadTitle })
+      if (!threadId) {
+        return { ok: false, error: t('quickCommands.sendFailed') }
+      }
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      const ok = Boolean(
+        await chatRef.current?.submitPromptInThread(targetProject.id, threadId, text, {
+          activate: false,
+          preserveComposerDraft: true,
+        }),
+      )
+      if (!ok) {
+        return { ok: false, error: t('quickCommands.sendFailed') }
+      }
+      return {
+        ok: true,
+        projectId: targetProject.id,
+        projectName: targetProject.name,
+        threadId,
+      }
+    },
+    [createThreadInProject, t, workspaceCommandClient],
+  )
+
   // --- `hashchange` → settings view; keep back/forward mirrors in sync / hash 变化映射到设置视图；同步前进后退按钮态 ---
 
   useEffect(() => {
@@ -3408,6 +3497,7 @@ export function AppShell() {
           onDiscussJournalEntry={discussJournalEntryInChat}
           onIntentTodoPendingCountChange={setIntentTodoPendingCount}
           onOpenDispatchedThread={(projectId, threadId) => void openDispatchedThread(projectId, threadId)}
+          onSendQuickCommand={sendQuickCommandToTarget}
           onNavigateToJournalAnchor={navigateToJournalAnchor}
           onOpenModelSettings={() => openSettingsCategory('general')}
         />

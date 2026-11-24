@@ -4,22 +4,33 @@
   position: relative;
   z-index: 50;
   flex-shrink: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  min-height: 54px;
-  padding: 8px 28px;
+  height: 56px;
+  min-width: 0;
+  padding: 0 28px;
   border-bottom: 1px solid var(--j-line);
   background: var(--j-canvas);
+  container-type: inline-size;
+  container-name: desk-topbar;
 }
 
+/* Symmetric safe-area padding: the center week wheel stays locked at viewport 50% */
 .app-shell.is-sidebar-collapsed .desk-topbar {
   padding-left: calc(
     max(var(--padding-panel), var(--spacing-token-safe-header-left)) +
       var(--width-chrome-toolbar) + var(--padding-panel) * 2
   );
+  padding-right: calc(
+    max(var(--padding-panel), var(--spacing-token-safe-header-left)) +
+      var(--width-chrome-toolbar) + var(--padding-panel) * 2
+  );
 }
 
+/* Match the right caption inset on the left so the center column stays at 50%. */
 html[data-windows-titlebar-overlay='true'] .desk-topbar {
+  padding-left: max(28px, calc(var(--spacing-token-safe-header-right) + 16px));
   padding-right: max(28px, calc(var(--spacing-token-safe-header-right) + 16px));
 }
 
@@ -29,12 +40,15 @@ html[data-windows-titlebar-overlay='true'] .desk-topbar {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+  min-width: 0;
 }
 
-.desk-topbar-spacer {
-  flex: 1;
-  align-self: stretch;
-  min-width: 12px;
+.desk-topbar-left {
+  justify-self: start;
+}
+
+.desk-topbar-right {
+  justify-self: end;
 }
 
 .desk-calendar-anchor {
@@ -99,6 +113,7 @@ html[data-windows-titlebar-overlay='true'] .desk-topbar {
   display: flex;
   align-items: center;
   gap: 6px;
+  justify-self: center;
 }
 
 .desk-week-arrow {
@@ -418,6 +433,24 @@ html[data-windows-titlebar-overlay='true'] .desk-topbar {
   background: var(--j-dai);
 }
 
+.desk-calendar-month-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--j-ink-3);
+}
+
+.desk-calendar-month-empty {
+  font-size: 10.5px;
+  color: var(--j-ink-3);
+  opacity: 0.55;
+}
+
+.desk-calendar-day-cell.is-has-entries {
+  font-weight: 600;
+}
+
 .desk-calendar-footer {
   display: flex;
   align-items: center;
@@ -449,4 +482,62 @@ html[data-windows-titlebar-overlay='true'] .desk-topbar {
   border-color: var(--j-dai);
   color: var(--j-dai);
   background: var(--j-dai-soft);
+}
+
+/* Responsive compact rules placed AFTER base rules so cascade takes effect */
+@container desk-topbar (max-width: 680px) {
+  .desk-topbar-left,
+  .desk-topbar-right {
+    gap: 6px;
+  }
+
+  .desk-week-strip {
+    gap: 3px;
+  }
+
+  .desk-week-days {
+    gap: 2px;
+  }
+
+  .desk-week-pill {
+    min-width: 28px;
+    padding: 3px 3px 5px;
+  }
+
+  .desk-week-arrow {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+@media (max-width: 720px) {
+  .desk-topbar,
+  .app-shell.is-sidebar-collapsed .desk-topbar,
+  html[data-windows-titlebar-overlay='true'] .desk-topbar {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .desk-topbar-left,
+  .desk-topbar-right {
+    gap: 6px;
+  }
+
+  .desk-week-strip {
+    gap: 3px;
+  }
+
+  .desk-week-days {
+    gap: 2px;
+  }
+
+  .desk-week-pill {
+    min-width: 28px;
+    padding: 3px 3px 5px;
+  }
+
+  .desk-week-arrow {
+    width: 22px;
+    height: 22px;
+  }
 }

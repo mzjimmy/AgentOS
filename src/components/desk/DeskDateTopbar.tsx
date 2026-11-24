@@ -14,13 +14,14 @@ import {
   getWeekDates,
   shiftDateString,
 } from '../journal/journal-ui-helpers'
-import { DeskCalendarPopover, type DeskCalendarDayMarker } from './DeskCalendarPopover'
+import { DeskCalendarPopover } from './DeskCalendarPopover'
+import {
+  resolveNextWeekTargetDate,
+  type DeskCalendarDayMarker,
+  type DeskDateTopbarDayState,
+} from './desk-date-framework-contract'
 
-export type DeskDateTopbarDayState = {
-  hasPending?: boolean
-  allCleared?: boolean
-  hasActivity?: boolean
-}
+export type { DeskCalendarDayMarker, DeskDateTopbarDayState } from './desk-date-framework-contract'
 
 export type DeskDateTopbarProps = {
   selectedDate: string
@@ -49,12 +50,14 @@ export function DeskDateTopbar({
   const [calendarOpen, setCalendarOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const weekStripDates = useMemo(() => getWeekDates(selectedDate), [selectedDate])
-
-  const nextWeekDate = shiftDateString(selectedDate, 7)
-  const nextWeekDisabled = disableFuture && weekStripDates[6] >= todayDate
+  const { targetDate: nextWeekTarget, disabled: nextWeekDisabled } = resolveNextWeekTargetDate(
+    selectedDate,
+    todayDate,
+    disableFuture,
+  )
 
   return (
-    <header className="desk-topbar">
+    <header className="desk-topbar draggable">
       <div className="desk-topbar-left no-drag">
         <div className="desk-calendar-anchor">
           <button
@@ -100,8 +103,6 @@ export function DeskDateTopbar({
           </button>
         ) : null}
       </div>
-
-      <div className="desk-topbar-spacer draggable" aria-hidden="true" />
 
       <nav className="desk-week-strip no-drag" aria-label={t('journal.weekStripAria')}>
         <button
@@ -162,14 +163,12 @@ export function DeskDateTopbar({
           title={t('journal.nextWeek')}
           onClick={() => {
             if (nextWeekDisabled) return
-            onSelectDate(disableFuture && nextWeekDate > todayDate ? todayDate : nextWeekDate)
+            onSelectDate(nextWeekTarget)
           }}
         >
           <IconInline name="forward" />
         </button>
       </nav>
-
-      <div className="desk-topbar-spacer draggable" aria-hidden="true" />
 
       <div className="desk-topbar-right no-drag">{rightSlot}</div>
     </header>
