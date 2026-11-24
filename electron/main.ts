@@ -3,7 +3,7 @@
  * Electron main entry: window lifecycle, tray menu, IPC bridges, and Claude Agent runner.
  */
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, powerMonitor, protocol, safeStorage, screen, session, shell, Tray, WebContentsView } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net, protocol, safeStorage, screen, session, shell, Tray, WebContentsView } from 'electron'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -38,17 +38,7 @@ import { RendererCapabilityRegistry, ProjectChatPermissionService, createProject
 import { createProjectChatBrokerRunnerAdapter, createProjectChatScopedReadCollaborator, createRuntimeChatScopedReadCollaborator } from './project-chat-runtime-services'
 import { ProjectChatPresenceRegistry } from './project-chat-presence'
 import { ProjectChatWindowManager } from './project-chat-window-manager'
-import { JournalStore } from './desk/journal-store'
-import { FeishuJournalBridgeService } from './desk/feishu-journal-bridge'
-import { JournalAutoTagService } from './desk/journal-auto-tag-service'
-import { registerJournalIpc } from './desk/journal-ipc'
-import { IntentTodoService } from './desk/intent-todo-service'
-import { LanguagePushService } from './desk/language-push-service'
-import { registerLanguagePushIpc } from './desk/language-push-ipc'
-import { MorningBriefService } from './desk/morning-brief-service'
-import { registerMorningBriefIpc } from './desk/morning-brief-ipc'
-import { OutboundService } from './desk/outbound-service'
-import { registerOutboundIpc } from './desk/outbound-ipc'
+import { mountAgentOSDesk, type DeskMainHandle } from '../sentinel-desk/adapters/agentos/main-host'
 import {
   attachMainWindowBoundsPersistence,
   MainWindowBoundsStore,
@@ -226,179 +216,7 @@ let claudeSettingsOperationChain: Promise<void> = Promise.resolve()
 let localAppRuntimeManager: LocalAppRuntimeManager | null = null
 let runtimeEditCoordinator: RuntimeEditCoordinator | null = null
 let runtimeEditRuntimeBridge: RuntimeEditRuntimeBridge | null = null
-let journalStore: JournalStore | null = null
-let feishuJournalBridge: FeishuJournalBridgeService | null = null
-let intentTodoService: IntentTodoService | null = null
-let languagePushService: LanguagePushService | null = null
-let morningBriefService: MorningBriefService | null = null
-let outboundService: OutboundService | null = null
-let journalAutoTagService: JournalAutoTagService | null = null
-let journalAutoTagDebounceTimer: NodeJS.Timeout | null = null
-const journalAutoTagPendingDates = new Set<string>()
-
-function getJournalStore(): JournalStore {
-  if (!journalStore) {
-    journalStore = new JournalStore({
-      onChange: (event) => {
-        if (win && !win.isDestroyed()) {
-          win.webContents.send(DESKTOP_EVENT_CHANNELS.onJournalChanged, event)
-        }
-        if (event.reason === 'created' || event.reason === 'updated') {
-          scheduleJournalAutoTag(event.dates)
-        }
-      },
-    })
-  }
-  return journalStore
-}
-
-function getJournalAutoTagService(): JournalAutoTagService {
-  if (!journalAutoTagService) {
-    journalAutoTagService = new JournalAutoTagService({
-      userDataPath: app.getPath('userData'),
-      journalStore: getJournalStore(),
-      getWorkspaceState: () => {
-        const state = chatWorkspaceStore?.current() ?? chatWorkspaceStore?.read() ?? null
-        return {
-          projects: (state?.projects ?? []).map((project) => ({
-            id: project.id,
-            name: project.name,
-            path: project.path,
-          })),
-        }
-      },
-      onChanged: (event) => {
-        for (const windowItem of BrowserWindow.getAllWindows()) {
-          if (!windowItem.isDestroyed()) {
-            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onJournalAutoTagChanged, event)
-          }
-        }
-      },
-    })
-  }
-  return journalAutoTagService
-}
-
-/**
- * Debounced auto-tagging trigger: journal writes are batched per affected date so a
- * burst of edits costs one local run instead of one run per keystroke.
- */
-function scheduleJournalAutoTag(dates: string[]): void {
-  if (dates.length === 0) return
-  for (const date of dates) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) journalAutoTagPendingDates.add(date)
-  }
-  if (journalAutoTagDebounceTimer) clearTimeout(journalAutoTagDebounceTimer)
-  journalAutoTagDebounceTimer = setTimeout(() => {
-    journalAutoTagDebounceTimer = null
-    const pending = Array.from(journalAutoTagPendingDates)
-    journalAutoTagPendingDates.clear()
-    for (const date of pending) {
-      void getJournalAutoTagService().runAutoTag({ date }).catch(() => undefined)
-    }
-  }, 1_200)
-}
-
-function getFeishuJournalBridge(): FeishuJournalBridgeService {
-  if (!feishuJournalBridge) {
-    feishuJournalBridge = new FeishuJournalBridgeService({
-      userDataPath: app.getPath('userData'),
-      journalStore: getJournalStore(),
-      onStatusChange: (status) => {
-        if (win && !win.isDestroyed()) {
-          win.webContents.send(DESKTOP_EVENT_CHANNELS.onFeishuJournalBridgeStatus, status)
-        }
-      },
-    })
-  }
-  return feishuJournalBridge
-}
-
-function getIntentTodoService(): IntentTodoService {
-  if (!intentTodoService) {
-    intentTodoService = new IntentTodoService({
-      userDataPath: app.getPath('userData'),
-      journalStore: getJournalStore(),
-      settingsStore: getClaudeAgentSettingsStore(),
-      getWorkspaceState: () => chatWorkspaceStore?.current() ?? chatWorkspaceStore?.read() ?? null,
-      getBroker: () => (PROJECT_CHAT_BROKER_V2_ENABLED ? projectChatBroker : null),
-      isOnline: () => net.isOnline(),
-      beforeScheduledAnalysis: (logicalDate) => getJournalAutoTagService().runAutoTag({ date: logicalDate }),
-      onChanged: (event) => {
-        for (const windowItem of BrowserWindow.getAllWindows()) {
-          if (!windowItem.isDestroyed()) {
-            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onIntentTodoChanged, event)
-          }
-        }
-      },
-    })
-  }
-  return intentTodoService
-}
-
-function getLanguagePushService(): LanguagePushService {
-  if (!languagePushService) {
-    languagePushService = new LanguagePushService({
-      journalStore: getJournalStore(),
-      settingsStore: getClaudeAgentSettingsStore(),
-      isOnline: () => net.isOnline(),
-      onChanged: (event) => {
-        for (const windowItem of BrowserWindow.getAllWindows()) {
-          if (!windowItem.isDestroyed()) {
-            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onLanguagePushChanged, event)
-          }
-        }
-      },
-    })
-  }
-  return languagePushService
-}
-
-function getMorningBriefService(): MorningBriefService {
-  if (!morningBriefService) {
-    morningBriefService = new MorningBriefService({
-      journalStore: getJournalStore(),
-      settingsStore: getClaudeAgentSettingsStore(),
-      isOnline: () => net.isOnline(),
-      onChanged: (event) => {
-        for (const windowItem of BrowserWindow.getAllWindows()) {
-          if (!windowItem.isDestroyed()) {
-            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onMorningBriefChanged, event)
-          }
-        }
-      },
-    })
-  }
-  return morningBriefService
-}
-
-function getOutboundService(): OutboundService {
-  if (!outboundService) {
-    outboundService = new OutboundService({
-      journalStore: getJournalStore(),
-      settingsStore: getClaudeAgentSettingsStore(),
-      defaultRepoPaths: () => {
-        try {
-          const state = getChatWorkspaceStore()?.read()
-          if (!state) return []
-          return state.projects
-            .map((p) => p.path)
-            .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
-        } catch {
-          return []
-        }
-      },
-      onChanged: (event) => {
-        for (const windowItem of BrowserWindow.getAllWindows()) {
-          if (!windowItem.isDestroyed()) {
-            windowItem.webContents.send(DESKTOP_EVENT_CHANNELS.onOutboundChanged, event)
-          }
-        }
-      },
-    })
-  }
-  return outboundService
-}
+let deskMain: DeskMainHandle | null = null
 let projectRuntimePlacementTracker: ProjectRuntimePlacementTracker | null = null
 let localAppTrustStore: LocalAppTrustStore | null = null
 let localAppPreviewManager: LocalAppPreviewManager | null = null
@@ -885,7 +703,7 @@ function installProjectChatProductionComposition(): void {
     runExclusive: (operation) => runChatWorkspaceOperation(async () => operation()),
     permissionMode: () => getDesktopPreferencesStore().read().chatPermissionMode ?? 'auto',
     promptOwnerCandidates: (input) => presence.ownerCandidates(input),
-    broadcast: (event) => { broadcaster(event); agentOSExternalTaskService?.observe(event); intentTodoService?.observeProjectChatEvent(event) },
+    broadcast: (event) => { broadcaster(event); agentOSExternalTaskService?.observe(event); deskMain?.observeProjectChatEvent(event) },
     runtimeEditCoordinator: runtimeEditCoordinator ?? undefined,
     runtimeEditEligible: (projectId) => readProjectRuntimeDefinition(projectId) !== null,
     onProjectRunStarting: (projectId, projectRoot) => projectRuntimePlacementTracker?.beforeRun(projectId, projectRoot),
@@ -1526,7 +1344,6 @@ async function prepareForAppQuit(): Promise<void> {
     // away so an in-flight transcript is not lost on quit.
     await chatWorkspaceStore?.flushPending().catch(() => undefined)
     speechRecognitionService?.dispose()
-    journalStore?.dispose()
     disposeProjectFileWatchers()
     await Promise.race([
       Promise.all([
@@ -1536,15 +1353,7 @@ async function prepareForAppQuit(): Promise<void> {
       ]),
       new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
     ])
-    feishuJournalBridge?.dispose()
-    intentTodoService?.dispose()
-    languagePushService?.dispose()
-    morningBriefService?.dispose()
-    outboundService?.dispose()
-    if (journalAutoTagDebounceTimer) {
-      clearTimeout(journalAutoTagDebounceTimer)
-      journalAutoTagDebounceTimer = null
-    }
+    deskMain?.dispose()
     projectRuntimeHosts.clear()
     tray?.destroy()
     tray = null
@@ -2991,66 +2800,15 @@ if (gotSingleInstanceLock) {
       if (typeof rawUrl !== 'string' || !isExternalHttpUrl(rawUrl)) return
       await shell.openExternal(rawUrl)
     })
-    registerJournalIpc(ipcMain, getJournalStore)
-    registerLanguagePushIpc(ipcMain, getLanguagePushService)
-    registerMorningBriefIpc(ipcMain, getMorningBriefService)
-    registerOutboundIpc(ipcMain, getOutboundService)
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getFeishuJournalBridgeStatus, () => getFeishuJournalBridge().getStatus())
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveFeishuJournalBridgeConfig, (_event, update: unknown) => getFeishuJournalBridge().updateConfig((update ?? {}) as any))
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.reconnectFeishuJournalBridge, () => getFeishuJournalBridge().reconnect())
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getJournalAutoTagStatus, () => getJournalAutoTagService().getStatus())
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.runJournalAutoTag, (_event, options?: unknown) =>
-      getJournalAutoTagService().runAutoTag((options ?? {}) as { date?: string; force?: boolean }),
-    )
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveJournalAutoTagConfig, (_event, patch: unknown) =>
-      getJournalAutoTagService().saveConfig((patch ?? {}) as any),
-    )
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getIntentTodoOverview, (_event, selectedDate?: unknown) =>
-      getIntentTodoService().getOverview(typeof selectedDate === 'string' ? selectedDate : undefined),
-    )
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.listIntentTodoCalendar, () =>
-      getIntentTodoService().listCalendarDays(),
-    )
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.refreshIntentTodo, (_event, selectedDate?: unknown) =>
-      getIntentTodoService().refreshAnalysis(typeof selectedDate === 'string' ? selectedDate : undefined),
-    )
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.decideIntentTodo, (_event, itemId: unknown, decision: unknown, selectedDate?: unknown) =>
-      getIntentTodoService().decideItem(
-        String(itemId),
-        decision as any,
-        typeof selectedDate === 'string' ? selectedDate : undefined,
-      ),
-    )
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.dispatchIntentTodo, (_event, params: unknown) =>
-      getIntentTodoService().dispatchItem((params ?? {}) as any),
-    )
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getIntentTodoConfig, () =>
-      getIntentTodoService().getConfig(),
-    )
-    ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveIntentTodoConfig, (_event, patch: unknown) =>
-      getIntentTodoService().saveConfig((patch ?? {}) as any),
-    )
+    deskMain = mountAgentOSDesk({
+      getMainWindow: () => win,
+      getSettingsStore: getClaudeAgentSettingsStore,
+      getWorkspaceStore: () => chatWorkspaceStore,
+      getBroker: () => (PROJECT_CHAT_BROKER_V2_ENABLED ? projectChatBroker : null),
+    })
     createWindow()
-    void getFeishuJournalBridge().startIfEnabled().catch(() => undefined)
+    deskMain.start()
     initializeAgentOSExternalTasks()
-    getIntentTodoService().start()
-    getLanguagePushService().start()
-    getMorningBriefService().start()
-    // Catch up on today's journal a few seconds after boot.
-    setTimeout(() => {
-      void getJournalAutoTagService().runAutoTag().catch(() => undefined)
-    }, 5_000)
-    powerMonitor.on('resume', () => {
-      intentTodoService?.notifySystemResumeOrFocus()
-      languagePushService?.notifySystemResumeOrFocus()
-      morningBriefService?.notifySystemResumeOrFocus()
-      void getJournalAutoTagService().runAutoTag().catch(() => undefined)
-    })
-    app.on('browser-window-focus', () => {
-      intentTodoService?.notifySystemResumeOrFocus()
-      languagePushService?.notifySystemResumeOrFocus()
-      morningBriefService?.notifySystemResumeOrFocus()
-    })
     ensureTray()
     appUpdaterService.scheduleUpdateChecks()
   })

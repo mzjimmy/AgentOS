@@ -171,9 +171,11 @@ test('registerJournalIpc: remains backwards compatible with a direct JournalStor
   dispose()
 })
 
-test('electron/main.ts delegates journal IPC to registerJournalIpc instead of duplicating handlers inline', () => {
+test('desk mount delegates journal IPC to registerJournalIpc and main.ts keeps no inline journal handlers', () => {
   const mainSource = readFileSync(resolve(rootDir, 'electron/main.ts'), 'utf8')
-  assert.match(mainSource, /import\s+\{\s*registerJournalIpc\s*\}\s+from\s+['"]\.\/desk\/journal-ipc['"]/)
-  assert.match(mainSource, /registerJournalIpc\(\s*ipcMain\s*,\s*getJournalStore\s*\)/)
-  assert.doesNotMatch(mainSource, /ipcMain\.handle\(\s*DESKTOP_INVOKE_CHANNELS\.getJournalConfig\b/)
+  const mountSource = readFileSync(resolve(rootDir, 'sentinel-desk/main/mount.ts'), 'utf8')
+  assert.match(mountSource, /import\s+\{\s*registerJournalIpc\s*\}\s+from\s+['"]\.\.\/\.\.\/electron\/desk\/journal-ipc['"]/)
+  assert.match(mountSource, /registerJournalIpc\(\s*host\.ipcMain\s*,\s*getJournalStore\s*\)/)
+  assert.doesNotMatch(mountSource, /ipcMain\.handle\(\s*DESKTOP_INVOKE_CHANNELS\.getJournalConfig\b/)
+  assert.doesNotMatch(mainSource, /registerJournalIpc|DESKTOP_INVOKE_CHANNELS\.getJournalConfig\b/)
 })

@@ -1,0 +1,646 @@
+{
+  "entries": [
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "electron/main.ts",
+      "to": "electron/desk/main-window-bounds.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "electron/preload.ts",
+      "to": "src/intent-todo-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "electron/preload.ts",
+      "to": "src/journal-auto-tag-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "electron/preload.ts",
+      "to": "src/journal-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "electron/preload.ts",
+      "to": "src/language-push-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "electron/preload.ts",
+      "to": "src/morning-brief-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "electron/preload.ts",
+      "to": "src/outbound-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShell.tsx",
+      "to": "src/journal-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShell.tsx",
+      "to": "src/quick-commands-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellSidebar.tsx",
+      "to": "src/components/pinned-modules.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellWorkspace.tsx",
+      "to": "src/components/intent-todo/IntentTodoPage.tsx",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellWorkspace.tsx",
+      "to": "src/components/journal/JournalPage.tsx",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellWorkspace.tsx",
+      "to": "src/components/language-push/LanguagePushPage.tsx",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellWorkspace.tsx",
+      "to": "src/components/morning-brief/MorningBriefMiniPlayer.tsx",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellWorkspace.tsx",
+      "to": "src/components/morning-brief/MorningBriefPage.tsx",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellWorkspace.tsx",
+      "to": "src/components/outbound/OutboundPage.tsx",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellWorkspace.tsx",
+      "to": "src/components/quick-commands/QuickCommandsPage.tsx",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellWorkspace.tsx",
+      "to": "src/journal-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/components/AppShellWorkspace.tsx",
+      "to": "src/quick-commands-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/desktop-api.ts",
+      "to": "src/intent-todo-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/desktop-api.ts",
+      "to": "src/journal-auto-tag-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/desktop-api.ts",
+      "to": "src/journal-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/desktop-api.ts",
+      "to": "src/language-push-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/desktop-api.ts",
+      "to": "src/morning-brief-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:base->desk-legacy",
+      "from": "src/desktop-api.ts",
+      "to": "src/outbound-contract.ts",
+      "note": "base host slot reaches into legacy desk code; migrate to sentinel-desk/adapters in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/intent-todo-analyzer.ts",
+      "to": "electron/anthropic-messages-client.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/intent-todo-analyzer.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/intent-todo-service.ts",
+      "to": "electron/anthropic-messages-client.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/intent-todo-service.ts",
+      "to": "electron/project-chat-broker.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/intent-todo-service.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/intent-todo-service.ts",
+      "to": "src/components/types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/intent-todo-service.ts",
+      "to": "src/project-chat-contract.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/intent-todo-store.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/journal-ipc.ts",
+      "to": "src/desktop-seam.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/language-push-analyzer.ts",
+      "to": "electron/anthropic-messages-client.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/language-push-analyzer.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/language-push-ipc.ts",
+      "to": "src/desktop-seam.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/language-push-service.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/language-push-tts.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/morning-brief-analyzer.ts",
+      "to": "electron/anthropic-messages-client.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/morning-brief-analyzer.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/morning-brief-ipc.ts",
+      "to": "src/desktop-seam.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/morning-brief-service.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/morning-brief-service.ts",
+      "to": "src/desktop-seam.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/outbound-analyzer.ts",
+      "to": "electron/anthropic-messages-client.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/outbound-analyzer.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/outbound-ipc.ts",
+      "to": "src/desktop-seam.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/outbound-service.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "electron/desk/outbound-service.ts",
+      "to": "src/desktop-seam.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/desk/DeskCalendarPopover.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/desk/DeskCalendarPopover.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/desk/DeskDatePageShell.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/desk/DeskDatePageShell.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/desk/DeskDateTopbar.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/desk/DeskDateTopbar.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/intent-todo/IntentTodoPage.tsx",
+      "to": "src/app-events.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/intent-todo/IntentTodoPage.tsx",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/intent-todo/IntentTodoPage.tsx",
+      "to": "src/components/types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/intent-todo/IntentTodoPage.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/intent-todo/IntentTodoPage.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/intent-todo/IntentTodoPage.tsx",
+      "to": "src/model-pick.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalCard.tsx",
+      "to": "src/components/types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalCard.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalCard.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalComposer.tsx",
+      "to": "src/components/types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalComposer.tsx",
+      "to": "src/desktop-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalComposer.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalComposer.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalFeishuModal.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalFeishuModal.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalLightbox.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalLightbox.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalPage.tsx",
+      "to": "src/components/types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalPage.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalPage.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/journal/JournalWeekView.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/language-push/LanguageCard.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/language-push/LanguageCard.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/language-push/LanguagePushPage.tsx",
+      "to": "src/app-events.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/language-push/LanguagePushPage.tsx",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/language-push/LanguagePushPage.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/language-push/LanguagePushPage.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/language-push/LanguagePushPage.tsx",
+      "to": "src/model-pick.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/morning-brief/MorningBriefMiniPlayer.tsx",
+      "to": "src/components/types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/morning-brief/MorningBriefMiniPlayer.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/morning-brief/MorningBriefPage.tsx",
+      "to": "src/app-events.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/morning-brief/MorningBriefPage.tsx",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/morning-brief/MorningBriefPage.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/morning-brief/MorningBriefPage.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/morning-brief/MorningBriefPage.tsx",
+      "to": "src/model-pick.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/outbound/OutboundPage.tsx",
+      "to": "src/app-events.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/outbound/OutboundPage.tsx",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/outbound/OutboundPage.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/outbound/OutboundPage.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/outbound/OutboundPage.tsx",
+      "to": "src/model-pick.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/pinned-modules.ts",
+      "to": "src/components/types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/pinned-modules.ts",
+      "to": "src/icons.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/quick-commands/QuickCommandsPage.tsx",
+      "to": "src/agent-command-channel.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/quick-commands/QuickCommandsPage.tsx",
+      "to": "src/components/types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/quick-commands/QuickCommandsPage.tsx",
+      "to": "src/i18n/i18n.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/components/quick-commands/QuickCommandsPage.tsx",
+      "to": "src/icon-inline.tsx",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/intent-todo-contract.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/language-push-contract.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/morning-brief-contract.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "ratchet:desk-legacy->base",
+      "from": "src/outbound-contract.ts",
+      "to": "src/claude-chat-types.ts",
+      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
+    },
+    {
+      "rule": "strict:desk-core->base",
+      "from": "sentinel-desk/main/ipc.ts",
+      "to": "src/desktop-seam.ts",
+      "note": "Transitional until P2: desk channel constants still live in the base seam; P2 moves them to a single desk:invoke/desk:event protocol."
+    },
+    {
+      "rule": "strict:desk-core->base",
+      "from": "sentinel-desk/main/mount.ts",
+      "to": "src/desktop-seam.ts",
+      "note": "Transitional until P2: desk event channel constants still live in the base seam; P2 moves them to a single desk:invoke/desk:event protocol."
+    }
+  ]
+}

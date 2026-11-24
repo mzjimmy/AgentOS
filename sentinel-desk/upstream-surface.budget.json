@@ -1,0 +1,257 @@
+{
+  "base": "55ad8c6c6350d8cfcf47a200e2a9717049d47f71",
+  "files": {
+    ".claude": {
+      "added": 0,
+      "removed": 1,
+      "category": "D",
+      "note": "sentinel desk symlink removed"
+    },
+    "AGENTS.md": {
+      "added": 21,
+      "removed": 0,
+      "category": "D",
+      "note": "sentinel desk guardrails documented"
+    },
+    "CLAUDE.md": {
+      "added": 0,
+      "removed": 1,
+      "category": "D",
+      "note": "sentinel desk guardrails documented"
+    },
+    "changes/INDEX.md": {
+      "added": 3,
+      "removed": 0,
+      "category": "D",
+      "note": "change index entry"
+    },
+    "design-system/DESIGN.md": {
+      "added": 4,
+      "removed": 0,
+      "category": "D",
+      "note": "design system note"
+    },
+    "electron-builder.config.cjs": {
+      "added": 8,
+      "removed": 0,
+      "category": "C",
+      "note": "generic packaging patch"
+    },
+    "electron/claude-agent-runner.ts": {
+      "added": 5,
+      "removed": 0,
+      "category": "C",
+      "note": "generic runner behaviour patch"
+    },
+    "electron/claude-agent-settings.test.mjs": {
+      "added": 10,
+      "removed": 0,
+      "category": "C",
+      "note": "test for the settings patch"
+    },
+    "electron/claude-agent-settings.ts": {
+      "added": 1,
+      "removed": 12,
+      "category": "C",
+      "note": "generic agent settings behaviour patch"
+    },
+    "electron/desktop-seam.test.mjs": {
+      "added": 8,
+      "removed": 2,
+      "category": "A",
+      "note": "base seam test extended for the desk channels"
+    },
+    "electron/local-app-runtime/static.ts": {
+      "added": 87,
+      "removed": 12,
+      "category": "C",
+      "note": "generic local app runtime patch"
+    },
+    "electron/main.ts": {
+      "added": 41,
+      "removed": 8,
+      "category": "A",
+      "note": "desk wiring inside the base main process (also carries C-class edits: window-bounds memory + permissionMode)"
+    },
+    "electron/preload.ts": {
+      "added": 225,
+      "removed": 0,
+      "category": "A",
+      "note": "desk IPC channels exposed to the renderer"
+    },
+    "electron/project-chat-broker.test.mjs": {
+      "added": 9,
+      "removed": 1,
+      "category": "C",
+      "note": "test for the broker patch"
+    },
+    "electron/project-chat-broker.ts": {
+      "added": 10,
+      "removed": 5,
+      "category": "C",
+      "note": "generic project chat broker patch"
+    },
+    "electron/static-runtime.test.mjs": {
+      "added": 120,
+      "removed": 0,
+      "category": "C",
+      "note": "test for the local app runtime patch"
+    },
+    "package-lock.json": {
+      "added": 190,
+      "removed": 20,
+      "category": "A",
+      "note": "lockfile for the desk dependency change"
+    },
+    "package.json": {
+      "added": 2,
+      "removed": 1,
+      "category": "A",
+      "note": "desk runtime dependency"
+    },
+    "src/components/AppShell.tsx": {
+      "added": 287,
+      "removed": 22,
+      "category": "A",
+      "note": "desk pages mounted into the base shell"
+    },
+    "src/components/AppShellSidebar.tsx": {
+      "added": 231,
+      "removed": 221,
+      "category": "C",
+      "note": "generic sidebar behaviour patch"
+    },
+    "src/components/AppShellWorkspace.tsx": {
+      "added": 86,
+      "removed": 2,
+      "category": "A",
+      "note": "desk page routing slot"
+    },
+    "src/components/app-shell-constants.ts": {
+      "added": 20,
+      "removed": 1,
+      "category": "A",
+      "note": "desk view heading + normalize entries"
+    },
+    "src/components/chat/ChatPage.tsx": {
+      "added": 14,
+      "removed": 4,
+      "category": "C",
+      "note": "generic chat page behaviour patch"
+    },
+    "src/components/chat/RichCodeBlock.tsx": {
+      "added": 4,
+      "removed": 3,
+      "category": "C",
+      "note": "generic rich code block patch"
+    },
+    "src/components/chat/Transcript.tsx": {
+      "added": 61,
+      "removed": 31,
+      "category": "C",
+      "note": "generic chat transcript behaviour patch"
+    },
+    "src/components/types.ts": {
+      "added": 10,
+      "removed": 1,
+      "category": "A",
+      "note": "desk view ids added to the base view union"
+    },
+    "src/desktop-api.ts": {
+      "added": 187,
+      "removed": 0,
+      "category": "A",
+      "note": "desk IPC client surface"
+    },
+    "src/desktop-seam.ts": {
+      "added": 50,
+      "removed": 0,
+      "category": "A",
+      "note": "shared desk channel contract"
+    },
+    "src/icons.ts": {
+      "added": 22,
+      "removed": 0,
+      "category": "A",
+      "note": "desk icons"
+    },
+    "src/locales/en.json": {
+      "added": 470,
+      "removed": 0,
+      "category": "A",
+      "note": "desk UI strings (en)"
+    },
+    "src/locales/zh.json": {
+      "added": 470,
+      "removed": 0,
+      "category": "A",
+      "note": "desk UI strings (zh)"
+    },
+    "src/style.css": {
+      "added": 1,
+      "removed": 0,
+      "category": "A",
+      "note": "desk stylesheet import"
+    },
+    "src/styles/agent-settings.css": {
+      "added": 3,
+      "removed": 0,
+      "category": "C",
+      "note": "generic agent settings style patch"
+    },
+    "src/styles/app-shell.css": {
+      "added": 128,
+      "removed": 50,
+      "category": "C",
+      "note": "generic app shell style patch"
+    },
+    "src/styles/base.css": {
+      "added": 1,
+      "removed": 1,
+      "category": "C",
+      "note": "generic base style patch"
+    },
+    "src/styles/chat-message.css": {
+      "added": 3,
+      "removed": 0,
+      "category": "C",
+      "note": "generic chat message style patch"
+    },
+    "src/styles/chat-tools.css": {
+      "added": 3,
+      "removed": 0,
+      "category": "C",
+      "note": "generic chat tools style patch"
+    },
+    "src/styles/project-home.css": {
+      "added": 1,
+      "removed": 0,
+      "category": "C",
+      "note": "generic project home style patch"
+    },
+    "src/theme/tokens.css": {
+      "added": 1,
+      "removed": 1,
+      "category": "C",
+      "note": "generic theme token patch"
+    },
+    "tsconfig.json": {
+      "added": 1,
+      "removed": 1,
+      "category": "A",
+      "note": "include sentinel-desk/ in the type-check scope"
+    },
+    "vite.config.ts": {
+      "added": 1,
+      "removed": 1,
+      "category": "A",
+      "note": "desk build wiring"
+    }
+  },
+  "addedOutsideDesk": [
+    "electron/anthropic-messages-client.ts",
+    "electron/chat-scroll-and-permission.test.mjs",
+    "electron/claude-agent-runner/permission.ts",
+    "electron/sidebar-ui-logic.test.mjs"
+  ]
+}

@@ -351,10 +351,11 @@ test('language-push date archive: getOverview(date) and decideCard(id, action, p
   }
 })
 
-test('language-push host wiring, single-line main.ts IPC delegation, and 1:1 zh/en locale parity', () => {
+test('language-push host wiring, single-line desk mount IPC delegation, and 1:1 zh/en locale parity', () => {
   const { PINNED_MODULES } = loadTsModule(resolve(rootDir, 'src/components/pinned-modules.ts'))
   const { normalizeViewId, VIEW_HEADING_KEYS } = loadTsModule(resolve(rootDir, 'src/components/app-shell-constants.ts'))
   const mainSource = readFileSync(resolve(rootDir, 'electron/main.ts'), 'utf8')
+  const mountSource = readFileSync(resolve(rootDir, 'sentinel-desk/main/mount.ts'), 'utf8')
   const workspaceSource = readFileSync(resolve(rootDir, 'src/components/AppShellWorkspace.tsx'), 'utf8')
   const pageSource = readFileSync(resolve(rootDir, 'src/components/language-push/LanguagePushPage.tsx'), 'utf8')
   const cardSource = readFileSync(resolve(rootDir, 'src/components/language-push/LanguageCard.tsx'), 'utf8')
@@ -365,9 +366,10 @@ test('language-push host wiring, single-line main.ts IPC delegation, and 1:1 zh/
   assert.equal(normalizeViewId('language-push'), 'language-push')
   assert.equal(VIEW_HEADING_KEYS['language-push'], 'shell.viewLanguagePush')
 
-  // Obeys AGENTS.md guardrail: single-line delegation in main.ts, zero flat handlers
-  assert.match(mainSource, /registerLanguagePushIpc\(\s*ipcMain\s*,\s*getLanguagePushService\s*\)/)
-  assert.doesNotMatch(mainSource, /ipcMain\.handle\(\s*DESKTOP_INVOKE_CHANNELS\.getLanguagePushOverview\b/)
+  // Obeys AGENTS.md guardrail: single-line delegation in the desk mount, zero flat handlers
+  assert.match(mountSource, /registerLanguagePushIpc\(\s*host\.ipcMain\s*,\s*getLanguagePushService\s*\)/)
+  assert.doesNotMatch(mountSource, /ipcMain\.handle\(\s*DESKTOP_INVOKE_CHANNELS\.getLanguagePushOverview\b/)
+  assert.doesNotMatch(mainSource, /registerLanguagePushIpc|DESKTOP_INVOKE_CHANNELS\.getLanguagePushOverview\b/)
   assert.match(workspaceSource, /activeViewId === 'language-push'/)
   assert.match(pageSource, /import\s+['"]\.\.\/\.\.\/styles\/language-push-page\.css['"]/)
 

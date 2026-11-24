@@ -142,8 +142,10 @@ test('Desktop seam contract drives preload forwarding and main registration', ()
   const morningBriefIpc = readFileSync(resolve(root, 'electron/desk/morning-brief-ipc.ts'), 'utf8')
   const outboundIpc = readFileSync(resolve(root, 'electron/desk/outbound-ipc.ts'), 'utf8')
   const speechRecognition = readFileSync(resolve(root, 'electron/speech-recognition.ts'), 'utf8')
-  const registrationSource = `${main}\n${appUpdater}\n${journalIpc}\n${languagePushIpc}\n${morningBriefIpc}\n${outboundIpc}`
-  const eventProducerSource = `${main}\n${appUpdater}\n${speechRecognition}`
+  const deskMount = readFileSync(resolve(root, 'sentinel-desk/main/mount.ts'), 'utf8')
+  const deskIpc = readFileSync(resolve(root, 'sentinel-desk/main/ipc.ts'), 'utf8')
+  const registrationSource = `${main}\n${appUpdater}\n${journalIpc}\n${languagePushIpc}\n${morningBriefIpc}\n${outboundIpc}\n${deskIpc}`
+  const eventProducerSource = `${main}\n${appUpdater}\n${speechRecognition}\n${deskMount}`
 
   assert.deepEqual(DESKTOP_STATIC_CAPABILITIES, ['platform', 'isDevRuntime', 'windowEffects'])
   assert.equal(DESKTOP_INVOKE_CHANNELS.getAppVersion, DESKTOP_INVOKE_CHANNELS.getAppUpdaterState)
