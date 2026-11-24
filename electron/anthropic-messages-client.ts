@@ -53,6 +53,10 @@ export type AnthropicFetchFn = (input: string, init?: RequestInit) => Promise<Re
 
 export type AnthropicCallOptions = {
   timeoutMs?: number
+  /** When true, sends `stream: true` and reads Anthropic SSE chunks with idle-timeout reset. Falls back to JSON if the upstream returns `application/json`. */
+  stream?: boolean
+  /** Max silence between chunks in SSE streaming mode (defaults to 60_000 ms). */
+  idleTimeoutMs?: number
   maxRateLimitRetries?: number
   fetchFn?: AnthropicFetchFn
   sleep?: (ms: number) => Promise<void>
@@ -153,6 +157,181 @@ function defaultSleep(ms: number): Promise<void> {
   })
 }
 
+type SseParseResult =
+  | {
+      ok: true
+      text: string
+      model: string
+      stopReason?: string
+      usage?: { inputTokens?: number; outputTokens?: number }
+    }
+  | {
+      ok: false
+      kind: 'rate_limited' | 'provider_error'
+      message: string
+    }
+
+/**
+ * Parses an Anthropic Messages API Server-Sent Events stream, collecting `text_delta`
+ * chunks while safely ignoring `thinking_delta` / `signature_delta` blocks.
+ * Calls `onChunk()` whenever bytes arrive so the caller can reset its idle timer.
+ */
+async function readAnthropicSseStream(
+  response: Response,
+  fallbackModel: string,
+  onChunk: () => void,
+): Promise<SseParseResult> {
+  const body = response.body
+  if (!body || typeof body.getReader !== 'function') {
+    return {
+      ok: false,
+      kind: 'provider_error',
+      message: '流式响应体不可读。',
+    }
+  }
+
+  const reader = body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  const textChunks: string[] = []
+  let resolvedModel = fallbackModel
+  let stopReason: string | undefined
+  let inputTokens: number | undefined
+  let outputTokens: number | undefined
+
+  const processDataPayload = (rawData: string): SseParseResult | null => {
+    const trimmed = rawData.trim()
+    if (!trimmed || trimmed === '[DONE]') return null
+    let payload: Record<string, unknown>
+    try {
+      payload = JSON.parse(trimmed) as Record<string, unknown>
+    } catch {
+      return null
+    }
+
+    const type = typeof payload.type === 'string' ? payload.type : ''
+    if (type === 'error') {
+      const errObj = payload.error as Record<string, unknown> | undefined
+      const errType = typeof errObj?.type === 'string' ? errObj.type : ''
+      const errMsg =
+        (typeof errObj?.message === 'string' && errObj.message.trim()) ||
+        (typeof payload.message === 'string' && payload.message.trim()) ||
+        errType ||
+        '模型流式响应返回错误。'
+      const isRateLimited = errType === 'rate_limit_error' || errType === 'overloaded_error'
+      return {
+        ok: false,
+        kind: isRateLimited ? 'rate_limited' : 'provider_error',
+        message: isRateLimited ? `模型限流或繁忙：${errMsg.slice(0, 300)}` : `模型调用失败：${errMsg.slice(0, 300)}`,
+      }
+    }
+
+    if (type === 'message_start') {
+      const msg = payload.message as Record<string, unknown> | undefined
+      if (typeof msg?.model === 'string' && msg.model.trim()) {
+        resolvedModel = msg.model
+      }
+      const usage = msg?.usage as Record<string, unknown> | undefined
+      if (typeof usage?.input_tokens === 'number') {
+        inputTokens = usage.input_tokens
+      }
+      if (typeof usage?.output_tokens === 'number') {
+        outputTokens = usage.output_tokens
+      }
+      return null
+    }
+
+    if (type === 'content_block_delta') {
+      const delta = payload.delta as Record<string, unknown> | undefined
+      if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+        textChunks.push(delta.text)
+      }
+      return null
+    }
+
+    if (type === 'message_delta') {
+      const delta = payload.delta as Record<string, unknown> | undefined
+      if (typeof delta?.stop_reason === 'string') {
+        stopReason = delta.stop_reason
+      }
+      const usage = payload.usage as Record<string, unknown> | undefined
+      if (typeof usage?.output_tokens === 'number') {
+        outputTokens = usage.output_tokens
+      }
+      if (typeof usage?.input_tokens === 'number') {
+        inputTokens = usage.input_tokens
+      }
+      return null
+    }
+
+    return null
+  }
+
+  const consumeEvents = (flush: boolean): SseParseResult | null => {
+    const normalized = buffer.replace(/\r\n/g, '\n')
+    const blocks = normalized.split('\n\n')
+    buffer = flush ? '' : (blocks.pop() ?? '')
+    for (const block of blocks) {
+      if (!block.trim()) continue
+      const dataLines: string[] = []
+      for (const line of block.split('\n')) {
+        if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trimStart())
+        }
+      }
+      if (dataLines.length === 0) continue
+      const streamError = processDataPayload(dataLines.join('\n'))
+      if (streamError) return streamError
+    }
+    if (flush && buffer.trim()) {
+      const dataLines: string[] = []
+      for (const line of buffer.split('\n')) {
+        if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trimStart())
+        }
+      }
+      if (dataLines.length > 0) {
+        const streamError = processDataPayload(dataLines.join('\n'))
+        if (streamError) return streamError
+      }
+    }
+    return null
+  }
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      if (value && value.byteLength > 0) {
+        onChunk()
+        buffer += decoder.decode(value, { stream: true })
+        const streamError = consumeEvents(false)
+        if (streamError) return streamError
+      }
+    }
+    buffer += decoder.decode()
+    const streamError = consumeEvents(true)
+    if (streamError) return streamError
+  } finally {
+    try {
+      reader.releaseLock()
+    } catch {
+      /* ignore releaseLock errors */
+    }
+  }
+
+  return {
+    ok: true,
+    text: textChunks.join('').trim(),
+    model: resolvedModel,
+    stopReason,
+    usage:
+      inputTokens !== undefined || outputTokens !== undefined
+        ? { inputTokens, outputTokens }
+        : undefined,
+  }
+}
+
 export async function callAnthropicMessages(
   config: Pick<ClaudeAgentResolvedConfig, 'apiKey' | 'authToken' | 'baseUrl' | 'model'>,
   request: AnthropicMessagesRequest,
@@ -192,9 +371,13 @@ export async function callAnthropicMessages(
     }
   }
 
+  const useStream = options.stream === true
   const headers: Record<string, string> = {
     'anthropic-version': DEFAULT_ANTHROPIC_VERSION,
     'content-type': 'application/json',
+  }
+  if (useStream) {
+    headers.accept = 'text/event-stream'
   }
   if (authToken) {
     headers.authorization = `Bearer ${authToken}`
@@ -206,6 +389,9 @@ export async function callAnthropicMessages(
     model,
     max_tokens: request.maxTokens ?? 4096,
     messages: request.messages,
+  }
+  if (useStream) {
+    bodyPayload.stream = true
   }
   if (request.system) {
     bodyPayload.system = request.system
@@ -221,12 +407,31 @@ export async function callAnthropicMessages(
   const fetchFn = options.fetchFn ?? (await resolveDefaultFetch())
   const sleep = options.sleep ?? defaultSleep
   const timeoutMs = options.timeoutMs ?? 90_000
+  const idleTimeoutMs = options.idleTimeoutMs ?? 60_000
   const maxRetries = options.maxRateLimitRetries ?? 2
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), timeoutMs)
-    timeout.unref?.()
+    let abortReason: 'total' | 'idle' | null = null
+    let idleTimer: ReturnType<typeof setTimeout> | null = null
+
+    const totalTimer = setTimeout(() => {
+      abortReason = 'total'
+      controller.abort()
+    }, timeoutMs)
+    totalTimer.unref?.()
+
+    const resetIdleTimer = () => {
+      if (!useStream || idleTimeoutMs <= 0) return
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => {
+        abortReason = 'idle'
+        controller.abort()
+      }, idleTimeoutMs)
+      idleTimer.unref?.()
+    }
+
+    resetIdleTimer()
 
     try {
       const response = await fetchFn(endpoint, {
@@ -237,6 +442,37 @@ export async function callAnthropicMessages(
       })
 
       if (response.ok) {
+        const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
+        if (useStream && contentType.includes('text/event-stream')) {
+          resetIdleTimer()
+          const sse = await readAnthropicSseStream(response, model, resetIdleTimer)
+          if (!sse.ok) {
+            if (sse.kind === 'rate_limited' && attempt < maxRetries) {
+              await sleep(Math.min(2_000 * 2 ** attempt, 15_000))
+              continue
+            }
+            return {
+              ok: false,
+              kind: sse.kind,
+              message: sse.message,
+              durationMs: Date.now() - startedAt,
+            }
+          }
+          return {
+            ok: true,
+            text: sse.text,
+            model: sse.model,
+            stopReason: sse.stopReason,
+            usage: sse.usage,
+            durationMs: Date.now() - startedAt,
+          }
+        }
+
+        // Non-streaming JSON response (also serves as graceful fallback if proxy buffers SSE into JSON)
+        if (idleTimer) {
+          clearTimeout(idleTimer)
+          idleTimer = null
+        }
         const json = (await response.json()) as Record<string, unknown>
         const text = extractAnthropicText(json)
         const usageRaw = json?.usage as Record<string, unknown> | undefined
@@ -291,19 +527,25 @@ export async function callAnthropicMessages(
         durationMs: Date.now() - startedAt,
       }
     } catch (error) {
-      const isAbort = error instanceof Error && error.name === 'AbortError'
+      const isAbort =
+        (error instanceof Error && error.name === 'AbortError') || controller.signal.aborted
+      const timeoutSec = Math.max(1, Math.round(timeoutMs / 1000))
+      const idleSec = Math.max(1, Math.round(idleTimeoutMs / 1000))
       return {
         ok: false,
         kind: isAbort ? 'timeout' : 'network',
         message: isAbort
-          ? '模型分析超时（90s），请稍后重试。'
+          ? abortReason === 'idle'
+            ? `模型响应超时（${idleSec}s 无输出），请稍后重试。`
+            : `模型分析超时（${timeoutSec}s），请稍后重试。`
           : error instanceof Error
             ? error.message
             : String(error),
         durationMs: Date.now() - startedAt,
       }
     } finally {
-      clearTimeout(timeout)
+      clearTimeout(totalTimer)
+      if (idleTimer) clearTimeout(idleTimer)
     }
   }
 

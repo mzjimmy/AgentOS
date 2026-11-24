@@ -469,11 +469,10 @@ test('intent-todo-store & service: serializes writes and concurrent dispatch, pr
       assert.match(call.input.text, /<ai_triage_suggestion/)
     }
     const lifeCall = dispatchedCalls[2]
-    for (const call of dispatchedCalls.filter((call) => call !== lifeCall)) {
-      assert.equal(call.context?.permissionModeOverride, undefined, 'project dispatch inherits the global mode')
+    for (const call of dispatchedCalls) {
+      assert.equal(call.context?.permissionModeOverride, undefined, 'all dispatches inherit the user global permission mode')
       assert.doesNotMatch(call.input.text, /只读 plan 模式/)
     }
-    assert.equal(lifeCall.context.permissionModeOverride, 'plan')
     assert.equal(lifeCall.context.cwdOverride, join(userDataPath, 'intent-todo-sandbox'))
     assert.ok(!lifeCall.context.cwdOverride.includes(deskRoot), 'life sandbox cwd must never touch deskRoot/journal')
 
@@ -1115,6 +1114,355 @@ test('intent-todo: forceReanalyze never duplicates done/dropped items, preserves
     } finally {
       rmSync(svcDir, { recursive: true, force: true })
     }
+  } finally {
+    rmSync(userDataPath, { recursive: true, force: true })
+    rmSync(deskRoot, { recursive: true, force: true })
+  }
+})
+
+test('intent-todo UI hygiene: cloud model selector lives exclusively in settings popover (single entry point)', () => {
+  const pageSource = readFileSync(
+    resolve(rootDir, 'src/components/intent-todo/IntentTodoPage.tsx'),
+    'utf8',
+  )
+  const cssSource = readFileSync(
+    resolve(rootDir, 'src/styles/intent-todo-page.css'),
+    'utf8',
+  )
+
+  // Single entry point: handleSelectCloudModel must be bound to exactly one <select> control
+  const handlerCalls = [...pageSource.matchAll(/handleSelectCloudModel\(/g)]
+  assert.equal(
+    handlerCalls.length,
+    1,
+    `expected exactly 1 handleSelectCloudModel binding (inside gear settings popover), found ${handlerCalls.length}`,
+  )
+
+  // Must live inside intent-todo-settings-popover, never inside the hero-left block
+  const heroLeftStart = pageSource.indexOf('className="intent-todo-hero-left"')
+  const heroRightStart = pageSource.indexOf('className="intent-todo-hero-right"')
+  const popoverStart = pageSource.indexOf('className="intent-todo-settings-popover"')
+  assert.ok(heroLeftStart >= 0 && heroRightStart > heroLeftStart, 'hero-left and hero-right blocks must exist')
+  assert.ok(popoverStart > heroRightStart, 'settings popover must exist in hero-right')
+
+  const heroLeftSlice = pageSource.slice(heroLeftStart, heroRightStart)
+  assert.doesNotMatch(heroLeftSlice, /<select\b/, 'hero-left must stay read-only and never host a <select> control')
+  assert.ok(
+    handlerCalls[0].index > popoverStart,
+    'cloud model selector must reside inside intent-todo-settings-popover',
+  )
+
+  // Dead hero dropdown styles must stay removed
+  for (const deadClass of ['intent-todo-model-picker', 'intent-todo-model-select', 'intent-todo-provider-pill']) {
+    assert.ok(!pageSource.includes(deadClass), `IntentTodoPage.tsx must not reference removed class ${deadClass}`)
+    assert.ok(!cssSource.includes(deadClass), `intent-todo-page.css must not keep dead CSS class ${deadClass}`)
+  }
+})
+
+test('sentinel-desk UI minimalism guard: zero hero teaching subtitles, no stacked topbar pills, concise hints', () => {
+  const lpPage = readFileSync(resolve(rootDir, 'src/components/language-push/LanguagePushPage.tsx'), 'utf8')
+  const qcPage = readFileSync(resolve(rootDir, 'src/components/quick-commands/QuickCommandsPage.tsx'), 'utf8')
+  const zh = JSON.parse(readFileSync(resolve(rootDir, 'src/locales/zh.json'), 'utf8'))
+
+  // No permanent instructional hero lead paragraphs or stacked stat pills
+  assert.ok(!lpPage.includes('lp-lead'), 'LanguagePushPage must not render a permanent hero lead paragraph')
+  assert.ok(!lpPage.includes('lp-stat-pill'), 'LanguagePushPage must not stack multiple topbar stat pills')
+  assert.ok(!qcPage.includes('qc-lead'), 'QuickCommandsPage must not render a permanent hero lead paragraph')
+
+  // Guarded settings hints and empty-state copy must stay concise (<= 22 chars) with zero internal jargon
+  const guardedZhHints = [
+    ['journal.autoTagLocalOnly', zh.journal?.autoTagLocalOnly],
+    ['journal.autoTagJevHint', zh.journal?.autoTagJevHint],
+    ['intentTodo.scheduleTip', zh.intentTodo?.scheduleTip],
+    ['intentTodo.modelPickerHint', zh.intentTodo?.modelPickerHint],
+    ['intentTodo.emptyActiveSub', zh.intentTodo?.emptyActiveSub],
+    ['intentTodo.emptyResolvedSub', zh.intentTodo?.emptyResolvedSub],
+    ['intentTodo.emptyClearedSub', zh.intentTodo?.emptyClearedSub],
+    ['intentTodo.emptyNoRunSub', zh.intentTodo?.emptyNoRunSub],
+    ['quickCommands.emptyBody', zh.quickCommands?.emptyBody],
+    ['languagePush.emptyTodayBody', zh.languagePush?.emptyTodayBody],
+  ]
+  for (const [key, value] of guardedZhHints) {
+    assert.equal(typeof value, 'string', `missing zh locale key ${key}`)
+    assert.ok(
+      value.length <= 22,
+      `${key} is too verbose (${value.length} chars > 22): "${value}"`,
+    )
+    assert.doesNotMatch(
+      value,
+      /~\d+ms|jev-\d|预分诊|IPC/i,
+      `${key} must not leak internal implementation details: "${value}"`,
+    )
+  }
+})
+
+test('anthropic-messages-client: SSE streaming parses text_delta, ignores thinking_delta, resets idle timeout on chunks, and falls back to JSON', async () => {
+  const client = loadTsModule(resolve(rootDir, 'electron/anthropic-messages-client.ts'))
+  const encoder = new TextEncoder()
+
+  // 1. SSE stream with thinking_delta + text_delta arriving slowly (total > idleTimeoutMs, per-chunk < idleTimeoutMs)
+  let capturedBody = null
+  const sseChunks = [
+    'event: message_start\ndata: {"type":"message_start","message":{"model":"deepseek-flash","usage":{"input_tokens":321}}}\n\n',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"deep reasoning..."}}\n\n',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"{\\"ignoredNoiseCount\\":0,"}}\n\n',
+    'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\\"todos\\":[]}"}}\n\n',
+    'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":99}}\n\n',
+    'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+  ]
+
+  const resStream = await client.callAnthropicMessages(
+    { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com/anthropic', model: 'deepseek-flash' },
+    { messages: [{ role: 'user', content: 'hi' }] },
+    {
+      stream: true,
+      timeoutMs: 2_000,
+      idleTimeoutMs: 80,
+      fetchFn: async (_url, init) => {
+        capturedBody = JSON.parse(init.body)
+        const stream = new ReadableStream({
+          async start(controller) {
+            for (const chunk of sseChunks) {
+              await new Promise((r) => setTimeout(r, 25))
+              controller.enqueue(encoder.encode(chunk))
+            }
+            controller.close()
+          },
+        })
+        return new Response(stream, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+        })
+      },
+    },
+  )
+
+  assert.equal(capturedBody.stream, true)
+  assert.equal(resStream.ok, true)
+  assert.equal(resStream.text, '{"ignoredNoiseCount":0,"todos":[]}')
+  assert.equal(resStream.model, 'deepseek-flash')
+  assert.equal(resStream.stopReason, 'end_turn')
+  assert.deepEqual(resStream.usage, { inputTokens: 321, outputTokens: 99 })
+
+  // 2. Idle timeout aborts stalled SSE stream cleanly
+  const resIdleTimeout = await client.callAnthropicMessages(
+    { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com/anthropic', model: 'deepseek-flash' },
+    { messages: [{ role: 'user', content: 'hi' }] },
+    {
+      stream: true,
+      timeoutMs: 2_000,
+      idleTimeoutMs: 40,
+      fetchFn: async (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => {
+            const err = new Error('aborted')
+            err.name = 'AbortError'
+            reject(err)
+          })
+        }),
+    },
+  )
+  assert.equal(resIdleTimeout.ok, false)
+  assert.equal(resIdleTimeout.kind, 'timeout')
+  assert.match(resIdleTimeout.message, /无输出/)
+
+  // 3. Graceful fallback when upstream ignores stream:true and responds with application/json
+  const resFallback = await client.callAnthropicMessages(
+    { apiKey: 'sk-test', baseUrl: 'https://api.deepseek.com/anthropic', model: 'deepseek-flash' },
+    { messages: [{ role: 'user', content: 'hi' }] },
+    {
+      stream: true,
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            model: 'deepseek-flash',
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: '{"ok":true}' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    },
+  )
+  assert.equal(resFallback.ok, true)
+  assert.equal(resFallback.text, '{"ok":true}')
+})
+
+test('intent-todo: dense engineering day runs in chronological batches, checkpoints completed batches, and resumes on retry', async () => {
+  const analyzer = loadTsModule(resolve(rootDir, 'electron/desk/intent-todo-analyzer.ts'))
+  const { IntentTodoService } = loadTsModule(resolve(rootDir, 'electron/desk/intent-todo-service.ts'))
+
+  // Direct unit check on partitionEntriesIntoBatches
+  const fakeItems = Array.from({ length: 12 }, (_, i) => ({
+    id: `e${i}`,
+    scrubbedBody: 'x'.repeat(300),
+  }))
+  const byCount = analyzer.partitionEntriesIntoBatches(fakeItems, 5, 10_000)
+  assert.deepEqual(byCount.map((b) => b.length), [5, 5, 2])
+  const byChars = analyzer.partitionEntriesIntoBatches(fakeItems, 10, 800)
+  assert.deepEqual(byChars.map((b) => b.length), [2, 2, 2, 2, 2, 2])
+
+  // End-to-end service test: 14 entries -> 2 batches (10 + 4)
+  // First run: batch 1 succeeds and creates an item, batch 2 times out.
+  // Retry run: batch 1 is skipped (already checkpointed), batch 2 runs with batch 1's item in openItems and closes it!
+  const userDataPath = mkdtempSync(join(tmpdir(), 'intent-todo-batch-ud-'))
+  const deskRoot = mkdtempSync(join(tmpdir(), 'intent-todo-batch-desk-'))
+
+  try {
+    const entries = []
+    const entryIds = []
+    for (let i = 1; i <= 14; i++) {
+      const hh = String(8 + Math.floor(i / 2)).padStart(2, '0')
+      const mm = i % 2 === 0 ? '30' : '00'
+      const id = `je_batch_${String(i).padStart(2, '0')}`
+      const body =
+        i === 1
+          ? '准备重构流式分析超时机制 @AgentOS'
+          : i === 14
+            ? '刚完成流式分析超时机制重构并验证通过 @AgentOS'
+            : `开发记录 #${i}：检查日志与性能指标`
+      entries.push({
+        id,
+        date: '2026-11-24',
+        time: `${hh}:${mm}`,
+        ts: `2026-11-24T${hh}:${mm}:00+08:00`,
+        category: '工程',
+        kind: 'note',
+        provenance: 'human',
+        private: false,
+        tags: [],
+        projectRefs: i === 1 || i === 14 ? ['AgentOS'] : [],
+        body,
+      })
+      entryIds.push(id)
+    }
+    const journalStore = {
+      getDeskRoot: () => deskRoot,
+      getDay: async (date) => ({ ok: true, entries: date === '2026-11-24' ? entries : [] }),
+    }
+
+    let llmCalls = 0
+    let batch2SawBatch1ItemId = null
+    let lastCallOptions = null
+
+    const service = new IntentTodoService({
+      userDataPath,
+      journalStore,
+      settingsStore: {
+        resolve: () => ({
+          apiKey: 'sk-test',
+          authToken: '',
+          baseUrl: 'https://api.deepseek.com/anthropic',
+          model: 'deepseek-flash',
+          configSource: 'settings',
+        }),
+        getSnapshot: () => ({
+          settings: {
+            activeProviderId: 'ds',
+            providers: [{ id: 'ds', name: 'DeepSeek', model: 'deepseek-flash' }],
+          },
+        }),
+      },
+      getWorkspaceState: () => ({
+        projects: [{ id: 'proj-1', name: 'AgentOS', path: '/tmp/nonexistent-agentos' }],
+      }),
+      getBroker: () => null,
+      now: () => new Date('2026-11-24T04:00:00Z'),
+      callLlm: async (_cfg, req, opts) => {
+        llmCalls += 1
+        lastCallOptions = opts
+        const msg = req.messages[0].content
+
+        // Call 1 (Batch 1 of 2): create open item
+        if (llmCalls === 1) {
+          assert.match(msg, /第 1\/2 批/)
+          return {
+            ok: true,
+            model: 'deepseek-flash',
+            durationMs: 120,
+            usage: { inputTokens: 800, outputTokens: 200 },
+            text: JSON.stringify({
+              ignoredNoiseCount: 9,
+              todos: [
+                {
+                  matchesExistingId: null,
+                  title: '重构流式分析超时机制',
+                  reason: '长日记易触发 90s 超时',
+                  track: 'engineering',
+                  actionKind: 'implement',
+                  urgency: 'high',
+                  suggestedProjectName: 'AgentOS',
+                  anchorEntryIds: [entryIds[0]],
+                  alreadyDone: false,
+                },
+              ],
+            }),
+          }
+        }
+
+        // Call 2 (Batch 2 of 2): simulate transient timeout
+        if (llmCalls === 2) {
+          assert.match(msg, /第 2\/2 批/)
+          return {
+            ok: false,
+            kind: 'timeout',
+            message: '模型响应超时（60s 无输出），请稍后重试。',
+            durationMs: 60_000,
+          }
+        }
+
+        // Call 3 (Retry): only the remaining 4 entries should be sent, and batch 1's persisted item must appear in openItems
+        const idMatch = msg.match(/id=(it_20261124_[a-f0-9]+)\s*\|\s*\[engineering\]\s*重构流式分析超时机制/)
+        assert.ok(idMatch, 'retry batch must receive batch 1 persisted item in openItems')
+        batch2SawBatch1ItemId = idMatch[1]
+        assert.ok(!msg.includes(entryIds[0]), 'already checkpointed batch 1 entries must not be resent')
+        assert.ok(msg.includes(entryIds[13]), 'remaining batch 2 entries must be sent on retry')
+
+        return {
+          ok: true,
+          model: 'deepseek-flash',
+          durationMs: 90,
+          usage: { inputTokens: 400, outputTokens: 120 },
+          text: JSON.stringify({
+            ignoredNoiseCount: 3,
+            todos: [
+              {
+                matchesExistingId: batch2SawBatch1ItemId,
+                title: '重构流式分析超时机制',
+                reason: '',
+                track: 'engineering',
+                actionKind: 'implement',
+                urgency: 'high',
+                suggestedProjectName: 'AgentOS',
+                anchorEntryIds: [entryIds[13]],
+                alreadyDone: true,
+                suggestedDoneSha: 'journal',
+                suggestedDoneMessage: '日记确认已完成重构',
+              },
+            ],
+          }),
+        }
+      },
+    })
+
+    // First run: fails on batch 2, but batch 1 is already persisted!
+    const first = await service.refreshAnalysis('2026-11-24')
+    assert.equal(first.ok, false)
+    assert.match(first.error, /已完成 1\/2 批/)
+    assert.equal(lastCallOptions.stream, true)
+    assert.equal(lastCallOptions.timeoutMs, 180_000)
+    assert.equal(lastCallOptions.idleTimeoutMs, 60_000)
+    assert.equal(first.overview.pendingItems.length, 1, 'batch 1 item must already be persisted after batch 2 failure')
+    assert.equal(first.overview.pendingItems[0].status, 'pending')
+
+    // Retry: resumes from batch 2 only, closes the item via matchesExistingId
+    const second = await service.refreshAnalysis('2026-11-24')
+    assert.equal(second.ok, true)
+    assert.equal(llmCalls, 3)
+    assert.equal(second.overview.pendingItems.length, 0)
+    assert.equal(second.overview.resolvedItems.length, 1)
+    assert.equal(second.overview.resolvedItems[0].id, batch2SawBatch1ItemId)
+    assert.equal(second.overview.resolvedItems[0].status, 'done')
+    assert.equal(second.overview.snapshot.stats.newHumanEntries, 14)
   } finally {
     rmSync(userDataPath, { recursive: true, force: true })
     rmSync(deskRoot, { recursive: true, force: true })

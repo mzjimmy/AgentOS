@@ -46,8 +46,39 @@ import type { CandidateIntentTodo, DroppedFingerprint } from './intent-todo-stor
 const execFileAsync = promisify(execFile)
 
 const MAX_ENTRY_CHARS = 1500
-const MAX_TOTAL_ENTRY_CHARS = 28_000
+const MAX_TOTAL_ENTRY_CHARS = 60_000
+const MAX_ENTRIES_PER_BATCH = 10
+const MAX_BATCH_ENTRY_CHARS = 8_000
 const GIT_LOG_TIMEOUT_MS = 2_000
+const INTENT_TODO_LLM_TIMEOUT_MS = 180_000
+const INTENT_TODO_LLM_IDLE_TIMEOUT_MS = 60_000
+
+export type AnalyzerBatchCommitPayload = {
+  batchIndex: number
+  totalBatches: number
+  logicalDate: string
+  ranAt: string
+  providerName: string
+  modelUsed: string
+  processedHashes: string[]
+  processedBodyHashes: string[]
+  candidates: CandidateIntentTodo[]
+  stats: {
+    scannedEntries: number
+    newHumanEntries: number
+    skippedPrivate: number
+    suspectedAiPaste: number
+    ignoredNoiseCount: number
+    durationMs: number
+    inputTokens?: number
+    outputTokens?: number
+  }
+}
+
+export type AnalyzerBatchContextUpdate = {
+  openItems?: Array<{ id: string; title: string; track: IntentTodoTrack; status: string }>
+  closedItems?: Array<{ id: string; title: string; track: IntentTodoTrack; status: string; anchorEntryIds?: string[] }>
+}
 
 export type WorkspaceProjectRef = {
   id: string
@@ -80,6 +111,16 @@ export type AnalyzerInput = {
   gitLogFetcher?: (project: WorkspaceProjectRef, sinceIso: string) => Promise<string[]>
   /** When true, bypasses incremental hash deduplication for this day (e.g. after switching cloud models). */
   forceReanalyze?: boolean
+  /** Optional batch sizing overrides (primarily for testing). */
+  maxEntriesPerBatch?: number
+  maxBatchChars?: number
+  /**
+   * Optional checkpoint callback invoked immediately after each batch succeeds.
+   * Returning refreshed openItems/closedItems feeds the persisted IDs into subsequent batches.
+   */
+  onBatchComplete?: (
+    batch: AnalyzerBatchCommitPayload,
+  ) => Promise<AnalyzerBatchContextUpdate | void> | AnalyzerBatchContextUpdate | void
 }
 
 export type AnalyzerOutput =
@@ -107,6 +148,8 @@ export type AnalyzerOutput =
       ok: false
       kind: AnthropicMessagesErrorKind | 'parse_error'
       message: string
+      completedBatches?: number
+      totalBatches?: number
     }
 
 type PreparedEntry = {
@@ -402,6 +445,37 @@ function matchProjectsMentionedInEntries(
   })
 }
 
+export function partitionEntriesIntoBatches<T extends { scrubbedBody: string }>(
+  entries: T[],
+  maxEntriesPerBatch = MAX_ENTRIES_PER_BATCH,
+  maxBatchChars = MAX_BATCH_ENTRY_CHARS,
+): T[][] {
+  if (entries.length === 0) return []
+  const maxCount = Math.max(1, Math.floor(maxEntriesPerBatch))
+  const maxChars = Math.max(1, Math.floor(maxBatchChars))
+  const batches: T[][] = []
+  let current: T[] = []
+  let currentChars = 0
+
+  for (const item of entries) {
+    const itemLen = item.scrubbedBody.length
+    if (
+      current.length > 0 &&
+      (current.length >= maxCount || currentChars + itemLen > maxChars)
+    ) {
+      batches.push(current)
+      current = []
+      currentChars = 0
+    }
+    current.push(item)
+    currentChars += itemLen
+  }
+  if (current.length > 0) {
+    batches.push(current)
+  }
+  return batches
+}
+
 export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<AnalyzerOutput> {
   const startedAt = Date.now()
   const nowDate = input.now ?? new Date()
@@ -420,8 +494,8 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
   let skippedPrivate = 0
   let suspectedAiPaste = 0
   const prepared: PreparedEntry[] = []
-  const processedHashes: string[] = []
-  const processedBodyHashes: string[] = []
+  const skippedHashes: string[] = []
+  const skippedBodyHashes: string[] = []
   const seenHashesInBatch = new Set<string>()
 
   for (const entry of allLoadedEntries) {
@@ -441,7 +515,7 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
         !seenHashesInBatch.has(contentHash)
       ) {
         seenHashesInBatch.add(contentHash)
-        processedHashes.push(contentHash)
+        skippedHashes.push(contentHash)
       }
       continue
     }
@@ -457,15 +531,15 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
 
     // Provenance separation: skip pure AI entries
     if (entry.kind === 'ai' || entry.provenance === 'ai' || entry.provenance === 'ai-verified') {
-      processedHashes.push(contentHash)
-      processedBodyHashes.push(bodyHash)
+      skippedHashes.push(contentHash)
+      skippedBodyHashes.push(bodyHash)
       continue
     }
 
     const bodyText = (entry.body || '').trim()
     if (!bodyText) {
-      processedHashes.push(contentHash)
-      processedBodyHashes.push(bodyHash)
+      skippedHashes.push(contentHash)
+      skippedBodyHashes.push(bodyHash)
       continue
     }
 
@@ -481,8 +555,6 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
       weakEvidence,
       suspectedAiPaste: aiPaste,
     })
-    processedHashes.push(contentHash)
-    processedBodyHashes.push(bodyHash)
   }
 
   // Short-circuit: no new human entries to analyze (zero LLM tokens spent)
@@ -493,8 +565,8 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
       ranAt: nowDate.toISOString(),
       providerName: input.providerName,
       modelUsed: input.resolvedConfig.model || 'none',
-      processedHashes,
-      processedBodyHashes,
+      processedHashes: skippedHashes,
+      processedBodyHashes: skippedBodyHashes,
       candidates: [],
       stats: {
         scannedEntries,
@@ -507,7 +579,7 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
     }
   }
 
-  // Enforce total prompt character budget (keep newest entries if extremely long)
+  // Enforce daily total character budget (keep newest entries if extremely long)
   const budgetedEntries: PreparedEntry[] = []
   let totalChars = 0
   for (let i = prepared.length - 1; i >= 0; i--) {
@@ -519,89 +591,19 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
     totalChars += item.scrubbedBody.length
   }
 
-  // Send all budgeted non-private human entries directly to the configured cloud LLM for maximum accuracy
-  const entriesForMainLlm: PreparedEntry[] = budgetedEntries
-
-  // Parallel git log + workspace mtime check ONLY on workspace projects mentioned in this batch
-  const matchedProjects = matchProjectsMentionedInEntries(entriesForMainLlm, input.projects)
-  const gitSinceIso = getShanghaiCutoverIso(shiftDateString(logicalDate, -1), cutoverHour)
-  const gitFetcher = input.gitLogFetcher ?? defaultFetchGitLog
-  const gitResults = await Promise.all(
-    matchedProjects.map(async (project) => ({
-      project,
-      commits: await gitFetcher(project, gitSinceIso),
-    })),
+  // Partition into chronological batches so dense engineering days never blow past
+  // single-request token or latency limits, while small days run in a single call.
+  const batches = partitionEntriesIntoBatches(
+    budgetedEntries,
+    input.maxEntriesPerBatch ?? MAX_ENTRIES_PER_BATCH,
+    input.maxBatchChars ?? MAX_BATCH_ENTRY_CHARS,
   )
 
-  // Assemble user message
-  const userSections: string[] = [
-    `当前分析日期：${logicalDate}`,
-    '',
-    '## 工作台可用项目',
-    input.projects.length > 0
-      ? input.projects.map((p) => `- ${p.name}`).join('\n')
-      : '- （无已挂载项目）',
-  ]
-
-  const gitLines = gitResults
-    .filter((r) => r.commits.length > 0)
-    .map((r) => `### ${r.project.name}\n${r.commits.map((c) => `- ${c}`).join('\n')}`)
-  if (gitLines.length > 0) {
-    userSections.push(
-      '',
-      '## 相关仓库近期提交与工作区变更（含时间戳，用于因果核实与已闭环判定：命中请设 alreadyDone=true）',
-      ...gitLines,
-    )
-  }
-
-  if (input.openItems.length > 0) {
-    userSections.push(
-      '',
-      '## 当前未闭环待办（命中请填 matchesExistingId，不要重复新建）',
-      ...input.openItems.map((i) => `- id=${i.id} | [${i.track}] ${i.title} (${i.status})`),
-    )
-  }
-
-  if (input.closedItems && input.closedItems.length > 0) {
-    userSections.push(
-      '',
-      '## 当日已闭环/已忽略事项（命中请直接跳过，或填 matchesExistingId，绝不可重复新建）',
-      ...input.closedItems.map(
-        (i) =>
-          `- id=${i.id} | [${i.track}] ${i.title} (${i.status})${i.anchorEntryIds?.length ? ` | anchors=${i.anchorEntryIds.join(',')}` : ''}`,
-      ),
-    )
-  }
-
-  if (input.droppedFingerprints.length > 0) {
-    userSections.push(
-      '',
-      '## 近期用户已否决事项（同义意图请跳过，不要重复推荐）',
-      ...input.droppedFingerprints.slice(-30).map((f) => `- ${f.title}`),
-    )
-  }
-
-  userSections.push('', '## 新增时间日记条目（已过滤私密并脱敏）')
-  for (const item of entriesForMainLlm) {
-    const flags = [
-      item.entry.provenance,
-      item.entry.category,
-      ...(item.entry.projectRefs.length > 0 ? [`projectRefs:${item.entry.projectRefs.join(',')}`] : []),
-      ...(item.entry.tags.length > 0 ? [`tags:${item.entry.tags.join(',')}`] : []),
-      ...(item.weakEvidence ? ['弱证据'] : []),
-      ...(item.suspectedAiPaste ? ['疑似含粘贴AI回复-仅取用户诉求'] : []),
-    ]
-    const tsPart = item.entry.ts ? ` | ts=${item.entry.ts}` : ''
-    userSections.push(
-      `### entryId=${item.entry.id} | ${item.entry.date} ${item.entry.time}${tsPart} | [${flags.join(' | ')}]`,
-      item.scrubbedBody,
-      '',
-    )
-  }
-
   const systemPrompt = buildSystemPrompt()
-  const userMessage = userSections.join('\n')
   const llmCaller = input.callLlm ?? callAnthropicMessages
+  const gitSinceIso = getShanghaiCutoverIso(shiftDateString(logicalDate, -1), cutoverHour)
+  const gitFetcher = input.gitLogFetcher ?? defaultFetchGitLog
+  const gitCache = new Map<string, string[]>()
 
   // Reasoning/thinking models (e.g. MiniMax-M3.1-Flash, Claude thinking) count thinking_tokens
   // toward max_tokens; 4096 can be exhausted entirely inside thinking blocks with empty text.
@@ -610,234 +612,433 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
     temperature: 0.1,
     // M3.1 Flash defaults to max reasoning effort, which can exhaust the JSON output budget.
     effort: input.resolvedConfig.model?.trim().toLowerCase() === 'minimax-m3.1-flash'
-      ? 'low' as const
+      ? ('low' as const)
       : undefined,
   }
-
-  const firstRes = await llmCaller(input.resolvedConfig, {
-    system: systemPrompt,
-    messages: [{ role: 'user', content: userMessage }],
-    ...requestOptions,
-  })
-
-  if (!firstRes.ok) {
-    return {
-      ok: false,
-      kind: firstRes.kind,
-      message: firstRes.message,
-    }
+  const callOptions: AnthropicCallOptions = {
+    stream: true,
+    timeoutMs: INTENT_TODO_LLM_TIMEOUT_MS,
+    idleTimeoutMs: INTENT_TODO_LLM_IDLE_TIMEOUT_MS,
   }
 
-  let parsed = validateAndParseModelJson(firstRes.text)
-  let totalInputTokens = firstRes.usage?.inputTokens ?? 0
-  let totalOutputTokens = firstRes.usage?.outputTokens ?? 0
-  let modelUsed = firstRes.model
-
-  // Up to 1 repair retry if schema validation failed
-  if (!parsed.ok) {
-    console.warn('[IntentTodoAnalyzer] first pass JSON parse failed', {
-      model: firstRes.model,
-      stopReason: firstRes.stopReason,
-      textLen: firstRes.text.length,
-      usage: firstRes.usage,
-      error: parsed.error,
-    })
-
-    const retryMessages: Array<{ role: 'user' | 'assistant'; content: string }> = firstRes.text.trim()
-      ? [
-          { role: 'user', content: userMessage },
-          { role: 'assistant', content: firstRes.text },
-          {
-            role: 'user',
-            content: `你上一次的 JSON 输出校验失败：${parsed.error}\n请简短思考后直接输出一个完整合法的 JSON 对象，不要包含任何解释文字。`,
-          },
-        ]
-      : [
-          {
-            role: 'user',
-            content: `${userMessage}\n\n（注意：请保持内部思考简短，务必直接输出完整合法的 JSON 对象，不要在思考阶段耗尽输出额度。）`,
-          },
-        ]
-
-    const repairRes = await llmCaller(input.resolvedConfig, {
-      system: systemPrompt,
-      messages: retryMessages,
-      ...requestOptions,
-    })
-
-    if (!repairRes.ok) {
-      return {
-        ok: false,
-        kind: repairRes.kind,
-        message: repairRes.message,
-      }
-    }
-
-    totalInputTokens += repairRes.usage?.inputTokens ?? 0
-    totalOutputTokens += repairRes.usage?.outputTokens ?? 0
-    modelUsed = repairRes.model
-    parsed = validateAndParseModelJson(repairRes.text)
-    if (!parsed.ok) {
-      console.warn('[IntentTodoAnalyzer] retry JSON parse failed', {
-        model: repairRes.model,
-        stopReason: repairRes.stopReason,
-        textLen: repairRes.text.length,
-        usage: repairRes.usage,
-        error: parsed.error,
-      })
-      const detail =
-        repairRes.stopReason === 'max_tokens'
-          ? '模型思考或输出达到 max_tokens 上限，未产出完整 JSON。'
-          : parsed.error
-      return {
-        ok: false,
-        kind: 'parse_error',
-        message: `模型返回格式无法解析（已重试 1 次）：${detail}`,
-      }
-    }
-  }
-
-  // Map validated raw todos onto concrete PreparedEntry anchors and workspace projects
-  const entryById = new Map(budgetedEntries.map((item) => [item.entry.id, item]))
   const projectByLowerName = new Map(input.projects.map((p) => [p.name.toLowerCase(), p]))
-  const knownIdSet = new Set([
-    ...input.openItems.map((i) => i.id),
-    ...(input.closedItems ?? []).map((i) => i.id),
-  ])
 
-  const candidates: CandidateIntentTodo[] = []
-  for (const row of parsed.payload.todos) {
-    const rawIds = Array.isArray(row.anchorEntryIds) ? row.anchorEntryIds : []
-    const anchors: IntentTodoAnchor[] = []
-    const explicitProjectRefs = new Set<string>()
+  let rollingOpenItems = [...input.openItems]
+  let rollingClosedItems = [...(input.closedItems ?? [])]
 
-    for (const rawId of rawIds) {
-      const matched = entryById.get(String(rawId))
-      if (!matched) continue
-      anchors.push({
-        date: matched.entry.date,
-        time: matched.entry.time,
-        entryId: matched.entry.id,
-        contentHash: matched.contentHash,
-        flags: buildAnchorFlags(matched),
-      })
-      // Only user-authored refs count as an explicit project binding. A ref the
-      // auto-tagger inferred must not be promoted into a hard binding.
-      const autoRefs = new Set(
-        (matched.entry.autoApplied?.projectRefs || []).map((r) => String(r || '').toLowerCase()),
+  const allProcessedHashes: string[] = []
+  const allProcessedBodyHashes: string[] = []
+  const allCandidates: CandidateIntentTodo[] = []
+  let totalInputTokens = 0
+  let totalOutputTokens = 0
+  let totalIgnoredNoiseCount = 0
+  let lastModelUsed = input.resolvedConfig.model || 'none'
+
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    const batchStartedAt = Date.now()
+    const batchEntries = batches[batchIndex]
+
+    // Parallel git log + workspace mtime check ONLY on workspace projects mentioned in this batch (cached per project)
+    const matchedProjects = matchProjectsMentionedInEntries(batchEntries, input.projects)
+    const gitResults = await Promise.all(
+      matchedProjects.map(async (project) => {
+        if (!gitCache.has(project.id)) {
+          gitCache.set(project.id, await gitFetcher(project, gitSinceIso))
+        }
+        return {
+          project,
+          commits: gitCache.get(project.id) ?? [],
+        }
+      }),
+    )
+
+    // Assemble user message for this batch
+    const userSections: string[] = [
+      batches.length > 1
+        ? `当前分析日期：${logicalDate}（第 ${batchIndex + 1}/${batches.length} 批，按时间顺序）`
+        : `当前分析日期：${logicalDate}`,
+      '',
+      '## 工作台可用项目',
+      input.projects.length > 0
+        ? input.projects.map((p) => `- ${p.name}`).join('\n')
+        : '- （无已挂载项目）',
+    ]
+
+    const gitLines = gitResults
+      .filter((r) => r.commits.length > 0)
+      .map((r) => `### ${r.project.name}\n${r.commits.map((c) => `- ${c}`).join('\n')}`)
+    if (gitLines.length > 0) {
+      userSections.push(
+        '',
+        '## 相关仓库近期提交与工作区变更（含时间戳，用于因果核实与已闭环判定：命中请设 alreadyDone=true）',
+        ...gitLines,
       )
-      for (const ref of matched.entry.projectRefs || []) {
-        const key = String(ref || '').toLowerCase()
-        if (!key || autoRefs.has(key)) continue
-        explicitProjectRefs.add(key)
-      }
     }
 
-    // Fallback to first entry if model invented an unknown id
-    if (anchors.length === 0) {
-      const fallback = budgetedEntries[0]
-      anchors.push({
-        date: fallback.entry.date,
-        time: fallback.entry.time,
-        entryId: fallback.entry.id,
-        contentHash: fallback.contentHash,
-        flags: buildAnchorFlags(fallback),
-      })
+    if (rollingOpenItems.length > 0) {
+      userSections.push(
+        '',
+        '## 当前未闭环待办（命中请填 matchesExistingId，不要重复新建）',
+        ...rollingOpenItems.map((i) => `- id=${i.id} | [${i.track}] ${i.title} (${i.status})`),
+      )
     }
 
-    const track: IntentTodoTrack = row.track === 'engineering' ? 'engineering' : 'life'
-    const urgency: IntentTodoUrgency =
-      row.urgency === 'high' || row.urgency === 'medium' || row.urgency === 'low'
-        ? row.urgency
-        : 'medium'
+    if (rollingClosedItems.length > 0) {
+      userSections.push(
+        '',
+        '## 当日已闭环/已忽略事项（命中请直接跳过，或填 matchesExistingId，绝不可重复新建）',
+        ...rollingClosedItems.map(
+          (i) =>
+            `- id=${i.id} | [${i.track}] ${i.title} (${i.status})${i.anchorEntryIds?.length ? ` | anchors=${i.anchorEntryIds.join(',')}` : ''}`,
+        ),
+      )
+    }
 
-    let suggestedProject: WorkspaceProjectRef | undefined
-    let projectExplicitlyBound = false
-    if (track === 'engineering') {
-      // Prefer explicit @projectRef from the cited journal entries
-      for (const ref of explicitProjectRefs) {
-        const hit = projectByLowerName.get(ref)
-        if (hit) {
-          suggestedProject = hit
-          projectExplicitlyBound = true
-          break
+    if (input.droppedFingerprints.length > 0) {
+      userSections.push(
+        '',
+        '## 近期用户已否决事项（同义意图请跳过，不要重复推荐）',
+        ...input.droppedFingerprints.slice(-30).map((f) => `- ${f.title}`),
+      )
+    }
+
+    userSections.push('', '## 新增时间日记条目（已过滤私密并脱敏）')
+    for (const item of batchEntries) {
+      const flags = [
+        item.entry.provenance,
+        item.entry.category,
+        ...(item.entry.projectRefs.length > 0 ? [`projectRefs:${item.entry.projectRefs.join(',')}`] : []),
+        ...(item.entry.tags.length > 0 ? [`tags:${item.entry.tags.join(',')}`] : []),
+        ...(item.weakEvidence ? ['弱证据'] : []),
+        ...(item.suspectedAiPaste ? ['疑似含粘贴AI回复-仅取用户诉求'] : []),
+      ]
+      const tsPart = item.entry.ts ? ` | ts=${item.entry.ts}` : ''
+      userSections.push(
+        `### entryId=${item.entry.id} | ${item.entry.date} ${item.entry.time}${tsPart} | [${flags.join(' | ')}]`,
+        item.scrubbedBody,
+        '',
+      )
+    }
+
+    const userMessage = userSections.join('\n')
+
+    const formatBatchFailure = (
+      kind: AnthropicMessagesErrorKind | 'parse_error',
+      rawMessage: string,
+    ): AnalyzerOutput => {
+      if (batchIndex > 0) {
+        return {
+          ok: false,
+          kind,
+          message: `已完成 ${batchIndex}/${batches.length} 批，剩余批次失败：${rawMessage}（点击重试将从断点继续）`,
+          completedBatches: batchIndex,
+          totalBatches: batches.length,
         }
       }
-      if (!suggestedProject && typeof row.suggestedProjectName === 'string' && row.suggestedProjectName.trim()) {
-        const key = row.suggestedProjectName.trim().toLowerCase()
-        suggestedProject =
-          projectByLowerName.get(key) ??
-          input.projects.find((p) => extractProjectMatchTokens(p).some((tok) => tok === key))
+      return {
+        ok: false,
+        kind,
+        message: rawMessage,
+        completedBatches: 0,
+        totalBatches: batches.length,
       }
     }
 
-    const matchesExistingId =
-      typeof row.matchesExistingId === 'string' && knownIdSet.has(row.matchesExistingId)
-        ? row.matchesExistingId
+    const firstRes = await llmCaller(
+      input.resolvedConfig,
+      {
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+        ...requestOptions,
+      },
+      callOptions,
+    )
+
+    if (!firstRes.ok) {
+      return formatBatchFailure(firstRes.kind, firstRes.message)
+    }
+
+    let parsed = validateAndParseModelJson(firstRes.text)
+    let batchInputTokens = firstRes.usage?.inputTokens ?? 0
+    let batchOutputTokens = firstRes.usage?.outputTokens ?? 0
+    let batchModelUsed = firstRes.model
+
+    // Up to 1 repair retry if schema validation failed
+    if (!parsed.ok) {
+      console.warn('[IntentTodoAnalyzer] first pass JSON parse failed', {
+        batchIndex,
+        totalBatches: batches.length,
+        model: firstRes.model,
+        stopReason: firstRes.stopReason,
+        textLen: firstRes.text.length,
+        usage: firstRes.usage,
+        error: parsed.error,
+      })
+
+      const retryMessages: Array<{ role: 'user' | 'assistant'; content: string }> = firstRes.text.trim()
+        ? [
+            { role: 'user', content: userMessage },
+            { role: 'assistant', content: firstRes.text },
+            {
+              role: 'user',
+              content: `你上一次的 JSON 输出校验失败：${parsed.error}\n请简短思考后直接输出一个完整合法的 JSON 对象，不要包含任何解释文字。`,
+            },
+          ]
+        : [
+            {
+              role: 'user',
+              content: `${userMessage}\n\n（注意：请保持内部思考简短，务必直接输出完整合法的 JSON 对象，不要在思考阶段耗尽输出额度。）`,
+            },
+          ]
+
+      const repairRes = await llmCaller(
+        input.resolvedConfig,
+        {
+          system: systemPrompt,
+          messages: retryMessages,
+          ...requestOptions,
+        },
+        callOptions,
+      )
+
+      if (!repairRes.ok) {
+        return formatBatchFailure(repairRes.kind, repairRes.message)
+      }
+
+      batchInputTokens += repairRes.usage?.inputTokens ?? 0
+      batchOutputTokens += repairRes.usage?.outputTokens ?? 0
+      batchModelUsed = repairRes.model
+      parsed = validateAndParseModelJson(repairRes.text)
+      if (!parsed.ok) {
+        console.warn('[IntentTodoAnalyzer] retry JSON parse failed', {
+          batchIndex,
+          totalBatches: batches.length,
+          model: repairRes.model,
+          stopReason: repairRes.stopReason,
+          textLen: repairRes.text.length,
+          usage: repairRes.usage,
+          error: parsed.error,
+        })
+        const detail =
+          repairRes.stopReason === 'max_tokens'
+            ? '模型思考或输出达到 max_tokens 上限，未产出完整 JSON。'
+            : parsed.error
+        return formatBatchFailure('parse_error', `模型返回格式无法解析（已重试 1 次）：${detail}`)
+      }
+    }
+
+    // Map validated raw todos onto concrete PreparedEntry anchors and workspace projects
+    const entryById = new Map(batchEntries.map((item) => [item.entry.id, item]))
+    const knownIdSet = new Set([
+      ...rollingOpenItems.map((i) => i.id),
+      ...rollingClosedItems.map((i) => i.id),
+    ])
+
+    const batchCandidates: CandidateIntentTodo[] = []
+    for (const row of parsed.payload.todos) {
+      const rawIds = Array.isArray(row.anchorEntryIds) ? row.anchorEntryIds : []
+      const anchors: IntentTodoAnchor[] = []
+      const explicitProjectRefs = new Set<string>()
+
+      for (const rawId of rawIds) {
+        const matched = entryById.get(String(rawId))
+        if (!matched) continue
+        anchors.push({
+          date: matched.entry.date,
+          time: matched.entry.time,
+          entryId: matched.entry.id,
+          contentHash: matched.contentHash,
+          flags: buildAnchorFlags(matched),
+        })
+        // Only user-authored refs count as an explicit project binding. A ref the
+        // auto-tagger inferred must not be promoted into a hard binding.
+        const autoRefs = new Set(
+          (matched.entry.autoApplied?.projectRefs || []).map((r) => String(r || '').toLowerCase()),
+        )
+        for (const ref of matched.entry.projectRefs || []) {
+          const key = String(ref || '').toLowerCase()
+          if (!key || autoRefs.has(key)) continue
+          explicitProjectRefs.add(key)
+        }
+      }
+
+      // Fallback to first entry in this batch if model invented an unknown id
+      if (anchors.length === 0) {
+        const fallback = batchEntries[0]
+        anchors.push({
+          date: fallback.entry.date,
+          time: fallback.entry.time,
+          entryId: fallback.entry.id,
+          contentHash: fallback.contentHash,
+          flags: buildAnchorFlags(fallback),
+        })
+      }
+
+      const track: IntentTodoTrack = row.track === 'engineering' ? 'engineering' : 'life'
+      const urgency: IntentTodoUrgency =
+        row.urgency === 'high' || row.urgency === 'medium' || row.urgency === 'low'
+          ? row.urgency
+          : 'medium'
+
+      let suggestedProject: WorkspaceProjectRef | undefined
+      let projectExplicitlyBound = false
+      if (track === 'engineering') {
+        // Prefer explicit @projectRef from the cited journal entries
+        for (const ref of explicitProjectRefs) {
+          const hit = projectByLowerName.get(ref)
+          if (hit) {
+            suggestedProject = hit
+            projectExplicitlyBound = true
+            break
+          }
+        }
+        if (!suggestedProject && typeof row.suggestedProjectName === 'string' && row.suggestedProjectName.trim()) {
+          const key = row.suggestedProjectName.trim().toLowerCase()
+          suggestedProject =
+            projectByLowerName.get(key) ??
+            input.projects.find((p) => extractProjectMatchTokens(p).some((tok) => tok === key))
+        }
+      }
+
+      const matchesExistingId =
+        typeof row.matchesExistingId === 'string' && knownIdSet.has(row.matchesExistingId)
+          ? row.matchesExistingId
+          : null
+
+      const titleRaw = String(row.title || '').replace(/\s+/g, ' ').trim()
+      const title =
+        titleRaw.length <= INTENT_TODO_TITLE_MAX_LEN
+          ? titleRaw
+          : `${titleRaw.slice(0, INTENT_TODO_TITLE_MAX_LEN - 1)}…`
+
+      const shaRaw = typeof row.suggestedDoneSha === 'string' && row.suggestedDoneSha.trim()
+        ? row.suggestedDoneSha.trim().slice(0, 12)
         : null
+      const shaMsg = typeof row.suggestedDoneMessage === 'string' ? row.suggestedDoneMessage.trim().slice(0, 60) : ''
+      const isAlreadyDone = row.alreadyDone === true || Boolean(shaRaw)
+      const doneSha = shaRaw ?? (isAlreadyDone ? 'verified' : null)
 
-    const titleRaw = String(row.title || '').replace(/\s+/g, ' ').trim()
-    const title =
-      titleRaw.length <= INTENT_TODO_TITLE_MAX_LEN
-        ? titleRaw
-        : `${titleRaw.slice(0, INTENT_TODO_TITLE_MAX_LEN - 1)}…`
+      const reasonRaw = typeof row.reason === 'string' ? row.reason.replace(/\s+/g, ' ').trim() : ''
+      const reason = reasonRaw.length <= 36 ? reasonRaw : `${reasonRaw.slice(0, 35)}…`
 
-    const shaRaw = typeof row.suggestedDoneSha === 'string' && row.suggestedDoneSha.trim()
-      ? row.suggestedDoneSha.trim().slice(0, 12)
-      : null
-    const shaMsg = typeof row.suggestedDoneMessage === 'string' ? row.suggestedDoneMessage.trim().slice(0, 60) : ''
-    const isAlreadyDone = row.alreadyDone === true || Boolean(shaRaw)
-    const doneSha = shaRaw ?? (isAlreadyDone ? 'verified' : null)
+      const validActionKinds: readonly IntentTodoActionKind[] = ['implement', 'investigate', 'design', 'life']
+      const actionKind: IntentTodoActionKind =
+        typeof row.actionKind === 'string' && validActionKinds.includes(row.actionKind as IntentTodoActionKind)
+          ? (row.actionKind as IntentTodoActionKind)
+          : track === 'life'
+            ? 'life'
+            : 'implement'
 
-    const reasonRaw = typeof row.reason === 'string' ? row.reason.replace(/\s+/g, ' ').trim() : ''
-    const reason = reasonRaw.length <= 36 ? reasonRaw : `${reasonRaw.slice(0, 35)}…`
-
-    const validActionKinds: readonly IntentTodoActionKind[] = ['implement', 'investigate', 'design', 'life']
-    const actionKind: IntentTodoActionKind =
-      typeof row.actionKind === 'string' && validActionKinds.includes(row.actionKind as IntentTodoActionKind)
-        ? (row.actionKind as IntentTodoActionKind)
-        : track === 'life'
-          ? 'life'
-          : 'implement'
-
-    const targetSurface =
-      typeof row.targetSurface === 'string' && row.targetSurface.trim()
-        ? row.targetSurface.replace(/\s+/g, ' ').trim().slice(0, 64)
-        : null
-    const doneCriteria =
-      typeof row.doneCriteria === 'string' && row.doneCriteria.trim()
-        ? row.doneCriteria.replace(/\s+/g, ' ').trim().slice(0, 64)
-        : null
-    const nonGoals = Array.isArray(row.nonGoals)
-      ? row.nonGoals
-          .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-          .map((x) => x.replace(/\s+/g, ' ').trim().slice(0, 48))
-          .slice(0, 2)
-      : []
-
-    candidates.push({
-      matchesExistingId,
-      title,
-      reason,
-      track,
-      actionKind,
-      urgency,
-      suggestedProjectId: suggestedProject?.id ?? null,
-      suggestedProjectName: suggestedProject?.name ?? null,
-      projectExplicitlyBound,
-      targetSurface,
-      repoHint: typeof row.repoHint === 'string' && row.repoHint.trim() ? row.repoHint.trim().slice(0, 80) : null,
-      doneCriteria,
-      nonGoals,
-      antiPatterns: Array.isArray(row.antiPatterns)
-        ? row.antiPatterns
+      const targetSurface =
+        typeof row.targetSurface === 'string' && row.targetSurface.trim()
+          ? row.targetSurface.replace(/\s+/g, ' ').trim().slice(0, 64)
+          : null
+      const doneCriteria =
+        typeof row.doneCriteria === 'string' && row.doneCriteria.trim()
+          ? row.doneCriteria.replace(/\s+/g, ' ').trim().slice(0, 64)
+          : null
+      const nonGoals = Array.isArray(row.nonGoals)
+        ? row.nonGoals
             .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-            .map((x) => x.trim().slice(0, 48))
+            .map((x) => x.replace(/\s+/g, ' ').trim().slice(0, 48))
             .slice(0, 2)
-        : [],
-      anchors,
-      suggestedDone: doneSha ? { sha: doneSha, message: shaMsg, projectName: suggestedProject?.name } : null,
-    })
+        : []
+
+      batchCandidates.push({
+        matchesExistingId,
+        title,
+        reason,
+        track,
+        actionKind,
+        urgency,
+        suggestedProjectId: suggestedProject?.id ?? null,
+        suggestedProjectName: suggestedProject?.name ?? null,
+        projectExplicitlyBound,
+        targetSurface,
+        repoHint: typeof row.repoHint === 'string' && row.repoHint.trim() ? row.repoHint.trim().slice(0, 80) : null,
+        doneCriteria,
+        nonGoals,
+        antiPatterns: Array.isArray(row.antiPatterns)
+          ? row.antiPatterns
+              .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+              .map((x) => x.trim().slice(0, 48))
+              .slice(0, 2)
+          : [],
+        anchors,
+        suggestedDone: doneSha ? { sha: doneSha, message: shaMsg, projectName: suggestedProject?.name } : null,
+      })
+    }
+
+    const batchProcessedHashes = [
+      ...(batchIndex === 0 ? skippedHashes : []),
+      ...batchEntries.map((item) => item.contentHash),
+    ]
+    const batchProcessedBodyHashes = [
+      ...(batchIndex === 0 ? skippedBodyHashes : []),
+      ...batchEntries.map((item) => item.bodyHash),
+    ]
+    const batchSuspectedAiPaste = batchEntries.filter((item) => item.suspectedAiPaste).length
+
+    allProcessedHashes.push(...batchProcessedHashes)
+    allProcessedBodyHashes.push(...batchProcessedBodyHashes)
+    allCandidates.push(...batchCandidates)
+    totalInputTokens += batchInputTokens
+    totalOutputTokens += batchOutputTokens
+    totalIgnoredNoiseCount += parsed.payload.ignoredNoiseCount
+    lastModelUsed = batchModelUsed
+
+    // Per-batch checkpoint commit + rolling context refresh
+    if (input.onBatchComplete) {
+      const ctxUpdate = await input.onBatchComplete({
+        batchIndex,
+        totalBatches: batches.length,
+        logicalDate,
+        ranAt: nowDate.toISOString(),
+        providerName: input.providerName,
+        modelUsed: batchModelUsed,
+        processedHashes: batchProcessedHashes,
+        processedBodyHashes: batchProcessedBodyHashes,
+        candidates: batchCandidates,
+        stats: {
+          scannedEntries,
+          newHumanEntries: batchEntries.length,
+          skippedPrivate,
+          suspectedAiPaste: batchSuspectedAiPaste,
+          ignoredNoiseCount: parsed.payload.ignoredNoiseCount,
+          durationMs: Date.now() - batchStartedAt,
+          inputTokens: batchInputTokens || undefined,
+          outputTokens: batchOutputTokens || undefined,
+        },
+      })
+      if (ctxUpdate?.openItems) {
+        rollingOpenItems = [...ctxUpdate.openItems]
+      }
+      if (ctxUpdate?.closedItems) {
+        rollingClosedItems = [...ctxUpdate.closedItems]
+      }
+    } else if (batchIndex < batches.length - 1) {
+      // In-memory rolling context when called without a store checkpoint callback
+      for (const cand of batchCandidates) {
+        if (cand.matchesExistingId) continue
+        const syntheticId = `batch_${batchIndex}_${rollingOpenItems.length + rollingClosedItems.length}`
+        if (cand.suggestedDone) {
+          rollingClosedItems.push({
+            id: syntheticId,
+            title: cand.title,
+            track: cand.track,
+            status: 'done',
+            anchorEntryIds: cand.anchors.map((a) => a.entryId),
+          })
+        } else {
+          rollingOpenItems.push({
+            id: syntheticId,
+            title: cand.title,
+            track: cand.track,
+            status: 'pending',
+          })
+        }
+      }
+    }
   }
 
   return {
@@ -845,16 +1046,16 @@ export async function runIntentTodoAnalysis(input: AnalyzerInput): Promise<Analy
     logicalDate,
     ranAt: nowDate.toISOString(),
     providerName: input.providerName,
-    modelUsed,
-    processedHashes,
-    processedBodyHashes,
-    candidates,
+    modelUsed: lastModelUsed,
+    processedHashes: allProcessedHashes,
+    processedBodyHashes: allProcessedBodyHashes,
+    candidates: allCandidates,
     stats: {
       scannedEntries,
       newHumanEntries: budgetedEntries.length,
       skippedPrivate,
       suspectedAiPaste,
-      ignoredNoiseCount: parsed.payload.ignoredNoiseCount,
+      ignoredNoiseCount: totalIgnoredNoiseCount,
       durationMs: Date.now() - startedAt,
       inputTokens: totalInputTokens || undefined,
       outputTokens: totalOutputTokens || undefined,

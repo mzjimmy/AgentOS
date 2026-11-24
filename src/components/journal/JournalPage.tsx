@@ -22,7 +22,7 @@ import {
 } from '../../journal-contract'
 import type { WorkspaceProject } from '../types'
 import type { JournalAutoTagEngine, JournalAutoTagStatus } from '../../journal-auto-tag-contract'
-import { JournalCalendarPopover } from './JournalCalendarPopover'
+import { DeskDatePageShell } from '../desk/DeskDatePageShell'
 import { JournalCard } from './JournalCard'
 import { JournalComposer } from './JournalComposer'
 import { JournalFeishuModal } from './JournalFeishuModal'
@@ -30,16 +30,11 @@ import { JournalLightbox, type LightboxImageItem } from './JournalLightbox'
 import { JournalWeekView } from './JournalWeekView'
 import { useShanghaiToday } from '../desk/useShanghaiToday'
 import {
-  formatCalendarDayNumber,
   formatJournalHeroDate,
-  formatJournalYearMonth,
-  formatShortWeekday,
-  formatWeekdayLabel,
   getJournalDesktopApi,
   getWeekDates,
   isFutureJournalDate,
   planJournalDayLayout,
-  shiftDateString,
   shouldShowLegacySyncButton,
 } from './journal-ui-helpers'
 
@@ -78,7 +73,7 @@ export function JournalPage({
   onTodayCountChange,
   onDiscussInChat,
 }: JournalPageProps) {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
   const todayDate = useShanghaiToday()
   const initialAnchor = useMemo(() => parseJournalAnchorHash(), [])
   const [selectedDate, setSelectedDate] = useState<string>(initialAnchor.date ?? todayDate)
@@ -103,10 +98,9 @@ export function JournalPage({
   const [autoTagLocalUrlDraft, setAutoTagLocalUrlDraft] = useState('')
   const [autoTagLocalModelDraft, setAutoTagLocalModelDraft] = useState('')
   const autoTagAnchorRef = useRef<HTMLDivElement | null>(null)
-  const [calendarOpen, setCalendarOpen] = useState(false)
   const [allDaySummaries, setAllDaySummaries] = useState<JournalDaySummary[]>([])
   const [calendarLoading, setCalendarLoading] = useState(false)
-  const calendarTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const calendarRequestSeq = useRef(0)
 
   const pendingImagesRef = useRef<Set<string>>(new Set())
   const imageCacheRef = useRef<Record<string, string>>({})
@@ -265,27 +259,28 @@ export function JournalPage({
     }
   }, [dayEntries, highlightedEntryId, loading, viewMode])
 
-  useEffect(() => {
-    if (!calendarOpen) return
+  const handleOpenCalendar = useCallback(() => {
     const api = getJournalDesktopApi()
     if (!api?.listJournalDays) return
-    let cancelled = false
+    const seq = ++calendarRequestSeq.current
     setCalendarLoading(true)
     void api
       .listJournalDays()
       .then((summaries) => {
-        if (!cancelled && Array.isArray(summaries)) {
+        if (seq === calendarRequestSeq.current && Array.isArray(summaries)) {
           setAllDaySummaries(summaries)
         }
       })
       .catch(() => undefined)
       .finally(() => {
-        if (!cancelled) setCalendarLoading(false)
+        if (seq === calendarRequestSeq.current) setCalendarLoading(false)
       })
-    return () => {
-      cancelled = true
-    }
-  }, [calendarOpen])
+  }, [])
+
+  const handleSelectDate = useCallback((dateStr: string) => {
+    setSelectedDate(dateStr)
+    setViewMode('day')
+  }, [])
 
   useEffect(() => {
     const api = window.desktop
@@ -489,7 +484,6 @@ export function JournalPage({
     })
   }, [imageCache, lightbox])
 
-  const weekStripDates = useMemo(() => getWeekDates(selectedDate), [selectedDate])
   const weekDayMap = useMemo(() => {
     const map = new Map<string, JournalWeekDay>()
     for (const day of weekDays) {
@@ -526,14 +520,281 @@ export function JournalPage({
     setDroppedFiles(imagesOnly)
   }
 
+  const calendarMarkers = useMemo(
+    () =>
+      allDaySummaries
+        .filter((summary) => summary && summary.date && summary.count > 0)
+        .map((summary) => ({ date: summary.date, hasActivity: true, count: summary.count })),
+    [allDaySummaries],
+  )
+
+  const getTopbarDayState = useCallback(
+    (dateStr: string) => {
+      const summary = weekDayMap.get(dateStr)?.summary
+      return {
+        hasActivity:
+          (summary?.count ?? 0) > 0 ||
+          (dateStr === selectedDateRef.current && dayEntries.length > 0),
+      }
+    },
+    [weekDayMap, dayEntries],
+  )
+
   if (hidden) {
     return null
   }
 
   return (
-    <section
-      className={`journal-page desk-surface${pageDragOver ? ' is-drag-over' : ''}`}
-      aria-label={t('journal.pageTitle')}
+    <DeskDatePageShell
+      pageClassName={`journal-page${pageDragOver ? ' is-drag-over' : ''}`}
+      hidden={false}
+      ariaLabel={t('journal.pageTitle')}
+      selectedDate={selectedDate}
+      todayDate={todayDate}
+      calendarMarkers={calendarMarkers}
+      calendarLoading={calendarLoading}
+      getDayState={getTopbarDayState}
+      onSelectDate={handleSelectDate}
+      onOpenCalendar={handleOpenCalendar}
+      topbarRightSlot={
+        <div className="desk-shell-seg" role="tablist" aria-label={t('journal.viewModeAria')}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === 'day'}
+            className={`desk-shell-seg-btn${viewMode === 'day' ? ' is-active' : ''}`}
+            onClick={() => setViewMode('day')}
+          >
+            {t('journal.modeDay')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === 'week'}
+            className={`desk-shell-seg-btn${viewMode === 'week' ? ' is-active' : ''}`}
+            onClick={() => setViewMode('week')}
+          >
+            {t('journal.modeWeek')}
+          </button>
+        </div>
+      }
+      innerClassName="journal-canvas-inner"
+      heroMeta={t('journal.entryCount', { n: dayEntries.length })}
+      heroLeftExtra={
+        activeTagFilter ? (
+          <button
+            type="button"
+            className="journal-filter-pill"
+            onClick={() => setActiveTagFilter(null)}
+          >
+            <span>#{activeTagFilter}</span>
+            <IconInline name="x" />
+          </button>
+        ) : null
+      }
+      heroRight={
+        <>
+          {syncState.kind === 'done' ? (
+            <div className="journal-sync-feedback">
+              <span>
+                {syncState.imported > 0
+                  ? t('journal.syncedCount', { n: syncState.imported.toLocaleString() })
+                  : t('journal.syncUpToDate', { n: syncState.totalScanned.toLocaleString() })}
+              </span>
+              {syncState.latestDate && syncState.latestDate !== selectedDate ? (
+                <button
+                  type="button"
+                  className="journal-sync-jump"
+                  onClick={() => setSelectedDate(syncState.latestDate!)}
+                >
+                  {t('journal.jumpLatest', { date: formatJournalHeroDate(syncState.latestDate) })}
+                </button>
+              ) : null}
+            </div>
+          ) : syncState.kind === 'error' ? (
+            <span className="journal-sync-error" title={syncState.message}>
+              {t('journal.syncFailed')}
+            </span>
+          ) : null}
+
+          {!isFutureJournalDate(selectedDate, todayDate) ? (
+            <button
+              type="button"
+              className="journal-sync-btn"
+              disabled={syncState.kind === 'syncing' || config?.legacyDbAvailable === false}
+              title={
+                config?.legacyDbAvailable === false
+                  ? t('journal.legacyDbUnavailable')
+                  : t('journal.syncLegacyTitle')
+              }
+              onClick={() => void handleSyncLegacy()}
+            >
+              <IconInline name="refresh" />
+              <span>
+                {syncState.kind === 'syncing'
+                  ? t('journal.syncingLegacy')
+                  : t('journal.syncLegacy')}
+              </span>
+            </button>
+          ) : null}
+
+          {saveNotice === 'saved' ? (
+            <span className="journal-status-pill">
+              <span className="journal-status-dot" aria-hidden="true" />
+              <span>{t('journal.statusSaved')}</span>
+            </span>
+          ) : null}
+
+          <div className="journal-autotag-anchor" ref={autoTagAnchorRef}>
+            <button
+              type="button"
+              className={`journal-status-pill is-clickable is-autotag-${
+                autoTagRunning
+                  ? 'running'
+                  : !autoTagStatus?.config.enabled
+                    ? 'disabled'
+                    : autoTagStatus?.lastRun.status === 'local_unreachable' ||
+                        autoTagStatus?.lastRun.status === 'failed'
+                      ? 'warn'
+                      : 'active'
+              }`}
+              title={t('journal.autoTagPillTitle')}
+              aria-expanded={autoTagOpen}
+              onClick={() => setAutoTagOpen((open) => !open)}
+            >
+              <span className="journal-status-dot" aria-hidden="true" />
+              <span>
+                {autoTagRunning
+                  ? t('journal.autoTagPillRunning')
+                  : !autoTagStatus?.config.enabled
+                    ? t('journal.autoTagPillDisabled')
+                    : autoTagStatus.config.engine === 'jev'
+                      ? t('journal.autoTagPillJev')
+                      : autoTagStatus.config.engine === 'auto'
+                        ? t('journal.autoTagPillAuto')
+                        : t('journal.autoTagPillLocal')}
+              </span>
+            </button>
+
+            {autoTagOpen && autoTagStatus ? (
+              <div className="journal-autotag-popover" role="dialog">
+                <label className="journal-autotag-row">
+                  <span>{t('journal.autoTagPopoverTitle')}</span>
+                  <input
+                    type="checkbox"
+                    checked={autoTagStatus.config.enabled}
+                    onChange={() => void handleToggleAutoTagEnabled()}
+                  />
+                </label>
+
+                <label className="journal-autotag-field">
+                  <span>{t('journal.autoTagEngineLabel')}</span>
+                  <select
+                    className="journal-autotag-select"
+                    value={autoTagStatus.config.engine || 'local'}
+                    onChange={(e) =>
+                      void handleChangeAutoTagEngine(e.target.value as JournalAutoTagEngine)
+                    }
+                  >
+                    <option value="local">{t('journal.autoTagEngineLocal')}</option>
+                    <option value="jev">{t('journal.autoTagEngineJev')}</option>
+                    <option value="auto">{t('journal.autoTagEngineAuto')}</option>
+                  </select>
+                </label>
+
+                {(autoTagStatus.config.engine || 'local') === 'local' ||
+                autoTagStatus.config.engine === 'auto' ? (
+                  <>
+                    <label className="journal-autotag-field">
+                      <span>{t('journal.autoTagLocalBaseUrlLabel')}</span>
+                      <input
+                        type="text"
+                        className="journal-autotag-input"
+                        value={autoTagLocalUrlDraft}
+                        onChange={(e) => setAutoTagLocalUrlDraft(e.target.value)}
+                        onBlur={() =>
+                          void handleSaveAutoTagLocalConfig({ localBaseUrl: autoTagLocalUrlDraft })
+                        }
+                      />
+                    </label>
+                    <label className="journal-autotag-field">
+                      <span>{t('journal.autoTagLocalModelLabel')}</span>
+                      <input
+                        type="text"
+                        className="journal-autotag-input"
+                        value={autoTagLocalModelDraft}
+                        onChange={(e) => setAutoTagLocalModelDraft(e.target.value)}
+                        onBlur={() =>
+                          void handleSaveAutoTagLocalConfig({ localModel: autoTagLocalModelDraft })
+                        }
+                      />
+                    </label>
+                  </>
+                ) : null}
+
+                <p className="journal-autotag-hint">
+                  {autoTagStatus.config.engine === 'local'
+                    ? t('journal.autoTagLocalOnly')
+                    : t('journal.autoTagJevHint')}
+                </p>
+
+                <div className="journal-autotag-meta">
+                  {(() => {
+                    const run = autoTagStatus.lastRunByDate[selectedDate] ?? autoTagStatus.lastRun
+                    if (run.status === 'idle') return t('journal.autoTagStatusIdle')
+                    if (run.status === 'disabled') return t('journal.autoTagStatusDisabled')
+                    if (run.status === 'local_unreachable') return t('journal.autoTagStatusUnreachable')
+                    if (run.status === 'failed') {
+                      return t('journal.autoTagStatusFailed', { message: run.message || 'error' })
+                    }
+                    return t('journal.autoTagStatusLastRun', {
+                      scanned: run.scanned,
+                      decided: run.decided,
+                      changed: run.changed,
+                    })
+                  })()}
+                </div>
+
+                {autoTagStatus.lastRun.endpoint ? (
+                  <div className="journal-autotag-endpoint">
+                    {t('journal.autoTagEndpoint', { endpoint: autoTagStatus.lastRun.endpoint })}
+                  </div>
+                ) : null}
+
+                <button
+                  type="button"
+                  className="journal-autotag-run-btn"
+                  disabled={autoTagRunning || !autoTagStatus.config.enabled}
+                  onClick={() => void handleRunAutoTagNow()}
+                >
+                  <IconInline name="refresh" />
+                  <span>
+                    {autoTagRunning ? t('journal.autoTagPillRunning') : t('journal.autoTagRunDayNow')}
+                  </span>
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          <button
+            type="button"
+            className={`journal-status-pill is-clickable is-feishu-${feishuStatus?.state ?? 'disabled'}`}
+            title={feishuStatus?.lastError || t('journal.feishuModalTitle')}
+            onClick={() => setFeishuModalOpen(true)}
+          >
+            <span className="journal-status-dot" aria-hidden="true" />
+            <span>
+              {feishuStatus?.state === 'connected'
+                ? t('journal.feishuBridgeConnected')
+                : feishuStatus?.state === 'connecting'
+                  ? t('journal.feishuBridgeConnecting')
+                  : feishuStatus?.state === 'error'
+                    ? t('journal.feishuBridgeError')
+                    : t('journal.feishuBridgeSetup')}
+            </span>
+          </button>
+        </>
+      }
       onDragOver={(event) => {
         if (event.dataTransfer?.types.includes('Files')) {
           event.preventDefault()
@@ -546,451 +807,106 @@ export function JournalPage({
         }
       }}
       onDrop={handlePageDrop}
-    >
-      <header className="journal-topbar">
-        <div className="journal-topbar-left no-drag">
-          <div className="journal-calendar-anchor">
-            <button
-              ref={calendarTriggerRef}
-              type="button"
-              className={`journal-year-month journal-year-month-btn${calendarOpen ? ' is-open' : ''}`}
-              aria-label={t('journal.calendarOpenAria')}
-              aria-haspopup="dialog"
-              aria-expanded={calendarOpen}
-              onClick={() => setCalendarOpen((open) => !open)}
-            >
-              <span>{formatJournalYearMonth(selectedDate)}</span>
-              <span className="journal-year-month-caret" aria-hidden="true">
-                {calendarOpen ? '▴' : '▾'}
-              </span>
-            </button>
+      footer={
+        <JournalComposer
+          targetDate={selectedDate}
+          projects={projects}
+          suggestedTags={suggestedTags}
+          externalDroppedFiles={droppedFiles}
+          onConsumedExternalDrop={() => setDroppedFiles([])}
+          onSubmit={handleCreateEntry}
+        />
+      }
+      overlays={
+        <>
+          {lightbox ? (
+            <JournalLightbox
+              images={lightbox.images}
+              activeIndex={lightbox.activeIndex}
+              onChangeIndex={(nextIndex) =>
+                setLightbox((cur) => (cur ? { ...cur, activeIndex: nextIndex } : null))
+              }
+              onClose={() => setLightbox(null)}
+            />
+          ) : null}
 
-            {calendarOpen ? (
-              <JournalCalendarPopover
-                selectedDate={selectedDate}
-                todayDate={todayDate}
-                daySummaries={allDaySummaries}
-                loading={calendarLoading}
-                anchorRef={calendarTriggerRef}
-                onSelectDate={(dateStr) => {
-                  setSelectedDate(dateStr)
-                  setViewMode('day')
-                }}
-                onClose={() => setCalendarOpen(false)}
-              />
-            ) : null}
-          </div>
-          {selectedDate !== todayDate ? (
+          {feishuModalOpen ? (
+            <JournalFeishuModal
+              status={feishuStatus}
+              onSave={async (update: FeishuBridgeConfigUpdate) => {
+                const api = getJournalDesktopApi()
+                if (!api?.saveFeishuJournalBridgeConfig) return
+                const next = await api.saveFeishuJournalBridgeConfig(update)
+                setFeishuStatus(next)
+              }}
+              onReconnect={async () => {
+                const api = getJournalDesktopApi()
+                if (!api?.reconnectFeishuJournalBridge) return
+                const next = await api.reconnectFeishuJournalBridge()
+                setFeishuStatus(next)
+              }}
+              onClose={() => setFeishuModalOpen(false)}
+            />
+          ) : null}
+        </>
+      }
+    >
+      {viewMode === 'week' ? (
+        <JournalWeekView
+          days={weekDays}
+          selectedDate={selectedDate}
+          todayDate={todayDate}
+          imageCache={imageCache}
+          onSelectDay={(dateStr) => {
+            setSelectedDate(dateStr)
+            setViewMode('day')
+          }}
+        />
+      ) : loading ? (
+        <div className="journal-empty-state">
+          <p className="journal-empty-title">{t('journal.loadingDay')}</p>
+        </div>
+      ) : visibleDayEntries.length === 0 ? (
+        <div className="journal-empty-state">
+          <p className="journal-empty-title">
+            {activeTagFilter
+              ? t('journal.noEntriesForTag', { tag: activeTagFilter })
+              : t('journal.emptyDayTitle')}
+          </p>
+          <p className="journal-empty-subtitle">{t('journal.emptyDayBody')}</p>
+          {shouldShowLegacySyncButton(selectedDate, todayDate, config?.legacyDbAvailable) && syncState.kind === 'idle' ? (
             <button
               type="button"
-              className="journal-today-pill"
-              onClick={() => setSelectedDate(todayDate)}
+              className="journal-empty-sync-cta"
+              onClick={() => void handleSyncLegacy()}
             >
-              {t('journal.jumpToday')}
+              {t('journal.syncLegacyEmptyCta')}
             </button>
           ) : null}
         </div>
-
-        <div className="journal-topbar-spacer draggable" aria-hidden="true" />
-
-        <nav className="journal-week-strip no-drag" aria-label={t('journal.weekStripAria')}>
-          <button
-            type="button"
-            className="journal-week-arrow"
-            aria-label={t('journal.prevWeek')}
-            title={t('journal.prevWeek')}
-            onClick={() => setSelectedDate((cur) => shiftDateString(cur, -7))}
-          >
-            <IconInline name="back" />
-          </button>
-
-          <div className="journal-week-days">
-            {weekStripDates.map((dateStr) => {
-              const isSelected = dateStr === selectedDate
-              const isToday = dateStr === todayDate
-              const summary = weekDayMap.get(dateStr)?.summary
-              const hasEntries = (summary?.count ?? 0) > 0 || (dateStr === selectedDate && dayEntries.length > 0)
-              return (
-                <button
-                  key={dateStr}
-                  type="button"
-                  className={`journal-week-pill${isSelected ? ' is-selected' : ''}${isToday ? ' is-today' : ''}`}
-                  aria-current={isSelected ? 'date' : undefined}
-                  onClick={() => setSelectedDate(dateStr)}
-                >
-                  <span className="journal-week-pill-wd">
-                    {formatShortWeekday(dateStr, locale)}
-                  </span>
-                  <span className="journal-week-pill-day">
-                    {formatCalendarDayNumber(dateStr)}
-                  </span>
-                  <span
-                    className={`journal-week-pill-dot${hasEntries ? ' is-visible' : ''}`}
-                    aria-hidden="true"
-                  />
-                </button>
-              )
-            })}
-          </div>
-
-          <button
-            type="button"
-            className="journal-week-arrow"
-            aria-label={t('journal.nextWeek')}
-            title={t('journal.nextWeek')}
-            onClick={() => setSelectedDate((cur) => shiftDateString(cur, 7))}
-          >
-            <IconInline name="forward" />
-          </button>
-        </nav>
-
-        <div className="journal-topbar-spacer draggable" aria-hidden="true" />
-
-        <div className="journal-topbar-right no-drag">
-          <div className="journal-mode-toggle" role="tablist" aria-label={t('journal.viewModeAria')}>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={viewMode === 'day'}
-              className={`journal-mode-btn${viewMode === 'day' ? ' is-active' : ''}`}
-              onClick={() => setViewMode('day')}
-            >
-              {t('journal.modeDay')}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={viewMode === 'week'}
-              className={`journal-mode-btn${viewMode === 'week' ? ' is-active' : ''}`}
-              onClick={() => setViewMode('week')}
-            >
-              {t('journal.modeWeek')}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <div className="journal-scroll-canvas">
-        <div className="journal-canvas-inner">
-          <div className="journal-hero">
-            <div className="journal-hero-left">
-              <h1 className="journal-hero-date">{formatJournalHeroDate(selectedDate)}</h1>
-              <span className="journal-hero-meta">
-                {formatWeekdayLabel(selectedDate, locale)} ·{' '}
-                {t('journal.entryCount', { n: dayEntries.length })}
-              </span>
-              {activeTagFilter ? (
-                <button
-                  type="button"
-                  className="journal-filter-pill"
-                  onClick={() => setActiveTagFilter(null)}
-                >
-                  <span>#{activeTagFilter}</span>
-                  <IconInline name="x" />
-                </button>
-              ) : null}
-            </div>
-
-            <div className="journal-hero-right">
-              {syncState.kind === 'done' ? (
-                <div className="journal-sync-feedback">
-                  <span>
-                    {syncState.imported > 0
-                      ? t('journal.syncedCount', { n: syncState.imported.toLocaleString() })
-                      : t('journal.syncUpToDate', { n: syncState.totalScanned.toLocaleString() })}
-                  </span>
-                  {syncState.latestDate && syncState.latestDate !== selectedDate ? (
-                    <button
-                      type="button"
-                      className="journal-sync-jump"
-                      onClick={() => setSelectedDate(syncState.latestDate!)}
-                    >
-                      {t('journal.jumpLatest', { date: formatJournalHeroDate(syncState.latestDate) })}
-                    </button>
-                  ) : null}
-                </div>
-              ) : syncState.kind === 'error' ? (
-                <span className="journal-sync-error" title={syncState.message}>
-                  {t('journal.syncFailed')}
-                </span>
-              ) : null}
-
-              {!isFutureJournalDate(selectedDate, todayDate) ? (
-                <button
-                  type="button"
-                  className="journal-sync-btn"
-                  disabled={syncState.kind === 'syncing' || config?.legacyDbAvailable === false}
-                  title={
-                    config?.legacyDbAvailable === false
-                      ? t('journal.legacyDbUnavailable')
-                      : t('journal.syncLegacyTitle')
-                  }
-                  onClick={() => void handleSyncLegacy()}
-                >
-                  <IconInline name="refresh" />
-                  <span>
-                    {syncState.kind === 'syncing'
-                      ? t('journal.syncingLegacy')
-                      : t('journal.syncLegacy')}
-                  </span>
-                </button>
-              ) : null}
-
-              {saveNotice === 'saved' ? (
-                <span className="journal-status-pill">
-                  <span className="journal-status-dot" aria-hidden="true" />
-                  <span>{t('journal.statusSaved')}</span>
-                </span>
-              ) : null}
-
-              <div className="journal-autotag-anchor" ref={autoTagAnchorRef}>
-                <button
-                  type="button"
-                  className={`journal-status-pill is-clickable is-autotag-${
-                    autoTagRunning
-                      ? 'running'
-                      : !autoTagStatus?.config.enabled
-                        ? 'disabled'
-                        : autoTagStatus?.lastRun.status === 'local_unreachable' ||
-                            autoTagStatus?.lastRun.status === 'failed'
-                          ? 'warn'
-                          : 'active'
-                  }`}
-                  title={t('journal.autoTagPillTitle')}
-                  aria-expanded={autoTagOpen}
-                  onClick={() => setAutoTagOpen((open) => !open)}
-                >
-                  <span className="journal-status-dot" aria-hidden="true" />
-                  <span>
-                    {autoTagRunning
-                      ? t('journal.autoTagPillRunning')
-                      : !autoTagStatus?.config.enabled
-                        ? t('journal.autoTagPillDisabled')
-                        : autoTagStatus.config.engine === 'jev'
-                          ? t('journal.autoTagPillJev')
-                          : autoTagStatus.config.engine === 'auto'
-                            ? t('journal.autoTagPillAuto')
-                            : t('journal.autoTagPillLocal')}
-                  </span>
-                </button>
-
-                {autoTagOpen && autoTagStatus ? (
-                  <div className="journal-autotag-popover" role="dialog">
-                    <label className="journal-autotag-row">
-                      <span>{t('journal.autoTagPopoverTitle')}</span>
-                      <input
-                        type="checkbox"
-                        checked={autoTagStatus.config.enabled}
-                        onChange={() => void handleToggleAutoTagEnabled()}
-                      />
-                    </label>
-
-                    <label className="journal-autotag-field">
-                      <span>{t('journal.autoTagEngineLabel')}</span>
-                      <select
-                        className="journal-autotag-select"
-                        value={autoTagStatus.config.engine || 'local'}
-                        onChange={(e) =>
-                          void handleChangeAutoTagEngine(e.target.value as JournalAutoTagEngine)
-                        }
-                      >
-                        <option value="local">{t('journal.autoTagEngineLocal')}</option>
-                        <option value="jev">{t('journal.autoTagEngineJev')}</option>
-                        <option value="auto">{t('journal.autoTagEngineAuto')}</option>
-                      </select>
-                    </label>
-
-                    {(autoTagStatus.config.engine || 'local') === 'local' ||
-                    autoTagStatus.config.engine === 'auto' ? (
-                      <>
-                        <label className="journal-autotag-field">
-                          <span>{t('journal.autoTagLocalBaseUrlLabel')}</span>
-                          <input
-                            type="text"
-                            className="journal-autotag-input"
-                            value={autoTagLocalUrlDraft}
-                            onChange={(e) => setAutoTagLocalUrlDraft(e.target.value)}
-                            onBlur={() =>
-                              void handleSaveAutoTagLocalConfig({ localBaseUrl: autoTagLocalUrlDraft })
-                            }
-                          />
-                        </label>
-                        <label className="journal-autotag-field">
-                          <span>{t('journal.autoTagLocalModelLabel')}</span>
-                          <input
-                            type="text"
-                            className="journal-autotag-input"
-                            value={autoTagLocalModelDraft}
-                            onChange={(e) => setAutoTagLocalModelDraft(e.target.value)}
-                            onBlur={() =>
-                              void handleSaveAutoTagLocalConfig({ localModel: autoTagLocalModelDraft })
-                            }
-                          />
-                        </label>
-                      </>
-                    ) : null}
-
-                    <p className="journal-autotag-hint">
-                      {autoTagStatus.config.engine === 'local'
-                        ? t('journal.autoTagLocalOnly')
-                        : t('journal.autoTagJevHint')}
-                    </p>
-
-                    <div className="journal-autotag-meta">
-                      {(() => {
-                        const run = autoTagStatus.lastRunByDate[selectedDate] ?? autoTagStatus.lastRun
-                        if (run.status === 'idle') return t('journal.autoTagStatusIdle')
-                        if (run.status === 'disabled') return t('journal.autoTagStatusDisabled')
-                        if (run.status === 'local_unreachable') return t('journal.autoTagStatusUnreachable')
-                        if (run.status === 'failed') {
-                          return t('journal.autoTagStatusFailed', { message: run.message || 'error' })
-                        }
-                        return t('journal.autoTagStatusLastRun', {
-                          scanned: run.scanned,
-                          decided: run.decided,
-                          changed: run.changed,
-                        })
-                      })()}
-                    </div>
-
-                    {autoTagStatus.lastRun.endpoint ? (
-                      <div className="journal-autotag-endpoint">
-                        {t('journal.autoTagEndpoint', { endpoint: autoTagStatus.lastRun.endpoint })}
-                      </div>
-                    ) : null}
-
-                    <button
-                      type="button"
-                      className="journal-autotag-run-btn"
-                      disabled={autoTagRunning || !autoTagStatus.config.enabled}
-                      onClick={() => void handleRunAutoTagNow()}
-                    >
-                      <IconInline name="refresh" />
-                      <span>
-                        {autoTagRunning ? t('journal.autoTagPillRunning') : t('journal.autoTagRunDayNow')}
-                      </span>
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-
-              <button
-                type="button"
-                className={`journal-status-pill is-clickable is-feishu-${feishuStatus?.state ?? 'disabled'}`}
-                title={feishuStatus?.lastError || t('journal.feishuModalTitle')}
-                onClick={() => setFeishuModalOpen(true)}
-              >
-                <span className="journal-status-dot" aria-hidden="true" />
-                <span>
-                  {feishuStatus?.state === 'connected'
-                    ? t('journal.feishuBridgeConnected')
-                    : feishuStatus?.state === 'connecting'
-                      ? t('journal.feishuBridgeConnecting')
-                      : feishuStatus?.state === 'error'
-                        ? t('journal.feishuBridgeError')
-                        : t('journal.feishuBridgeSetup')}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          {viewMode === 'week' ? (
-            <JournalWeekView
-              days={weekDays}
-              selectedDate={selectedDate}
-              todayDate={todayDate}
+      ) : (
+        <div className="journal-bento-grid">
+          {dayLayoutItems.map((item) => (
+            <JournalCard
+              key={item.entry.id}
+              entry={item.entry}
+              index={item.index}
+              layout={item}
+              projects={projects}
+              deskRoot={config?.deskRoot ?? DEFAULT_SENTINEL_DESK_ROOT}
               imageCache={imageCache}
-              onSelectDay={(dateStr) => {
-                setSelectedDate(dateStr)
-                setViewMode('day')
-              }}
+              onOpenImage={handleOpenImage}
+              onUpdateEntry={handleUpdateEntry}
+              onDeleteEntry={handleDeleteEntry}
+              onDiscussInChat={onDiscussInChat}
+              highlighted={highlightedEntryId === item.entry.id}
+              onFilterByTag={(tag) =>
+                setActiveTagFilter((cur) => (cur === tag ? null : tag))
+              }
             />
-          ) : loading ? (
-            <div className="journal-empty-state">
-              <p className="journal-empty-title">{t('journal.loadingDay')}</p>
-            </div>
-          ) : visibleDayEntries.length === 0 ? (
-            <div className="journal-empty-state">
-              <p className="journal-empty-title">
-                {activeTagFilter
-                  ? t('journal.noEntriesForTag', { tag: activeTagFilter })
-                  : t('journal.emptyDayTitle')}
-              </p>
-              <p className="journal-empty-subtitle">{t('journal.emptyDayBody')}</p>
-              {shouldShowLegacySyncButton(selectedDate, todayDate, config?.legacyDbAvailable) && syncState.kind === 'idle' ? (
-                <button
-                  type="button"
-                  className="journal-empty-sync-cta"
-                  onClick={() => void handleSyncLegacy()}
-                >
-                  {t('journal.syncLegacyEmptyCta')}
-                </button>
-              ) : null}
-            </div>
-          ) : (
-            <div className="journal-bento-grid">
-              {dayLayoutItems.map((item) => (
-                <JournalCard
-                  key={item.entry.id}
-                  entry={item.entry}
-                  index={item.index}
-                  layout={item}
-                  projects={projects}
-                  deskRoot={config?.deskRoot ?? DEFAULT_SENTINEL_DESK_ROOT}
-                  imageCache={imageCache}
-                  onOpenImage={handleOpenImage}
-                  onUpdateEntry={handleUpdateEntry}
-                  onDeleteEntry={handleDeleteEntry}
-                  onDiscussInChat={onDiscussInChat}
-                  highlighted={highlightedEntryId === item.entry.id}
-                  onFilterByTag={(tag) =>
-                    setActiveTagFilter((cur) => (cur === tag ? null : tag))
-                  }
-                />
-              ))}
-            </div>
-          )}
+          ))}
         </div>
-      </div>
-
-      <JournalComposer
-        targetDate={selectedDate}
-        projects={projects}
-        suggestedTags={suggestedTags}
-        externalDroppedFiles={droppedFiles}
-        onConsumedExternalDrop={() => setDroppedFiles([])}
-        onSubmit={handleCreateEntry}
-      />
-
-      {lightbox ? (
-        <JournalLightbox
-          images={lightbox.images}
-          activeIndex={lightbox.activeIndex}
-          onChangeIndex={(nextIndex) =>
-            setLightbox((cur) => (cur ? { ...cur, activeIndex: nextIndex } : null))
-          }
-          onClose={() => setLightbox(null)}
-        />
-      ) : null}
-
-      {feishuModalOpen ? (
-        <JournalFeishuModal
-          status={feishuStatus}
-          onSave={async (update: FeishuBridgeConfigUpdate) => {
-            const api = getJournalDesktopApi()
-            if (!api?.saveFeishuJournalBridgeConfig) return
-            const next = await api.saveFeishuJournalBridgeConfig(update)
-            setFeishuStatus(next)
-          }}
-          onReconnect={async () => {
-            const api = getJournalDesktopApi()
-            if (!api?.reconnectFeishuJournalBridge) return
-            const next = await api.reconnectFeishuJournalBridge()
-            setFeishuStatus(next)
-          }}
-          onClose={() => setFeishuModalOpen(false)}
-        />
-      ) : null}
-    </section>
+      )}
+    </DeskDatePageShell>
   )
 }

@@ -24,9 +24,8 @@ import {
 } from '../../intent-todo-contract'
 import { buildModelPickRows, modelPickFromRow, modelPickKey } from '../../model-pick'
 import type { WorkspaceProject } from '../types'
-import { DeskDateTopbar } from '../desk/DeskDateTopbar'
+import { DeskDatePageShell } from '../desk/DeskDatePageShell'
 import { useShanghaiToday } from '../desk/useShanghaiToday'
-import { formatJournalHeroDate, formatWeekdayLabel } from '../journal/journal-ui-helpers'
 
 export type IntentTodoPageProps = {
   hidden?: boolean
@@ -88,7 +87,7 @@ export function IntentTodoPage({
   onNavigateToJournalAnchor,
   onOpenModelSettings,
 }: IntentTodoPageProps) {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
   const [refreshTick, setRefreshTick] = useState(0)
   const todayLogicalDate = useShanghaiToday({
     cutoverHour: INTENT_TODO_CUTOVER_HOUR,
@@ -803,377 +802,345 @@ export function IntentTodoPage({
   }
 
   return (
-    <section
-      className="intent-todo-page desk-surface"
-      aria-label={t('intentTodo.pageTitle')}
-    >
-      <DeskDateTopbar
-        selectedDate={selectedDate}
-        todayDate={todayLogicalDate}
-        disableFuture
-        calendarMarkers={calendarMarkers}
-        getDayState={(dateStr) => {
-          const info = calendarDayMap.get(dateStr)
-          if (!info) return {}
-          return {
-            hasPending: info.pendingCount > 0,
-            allCleared: info.allCleared,
-            hasActivity: info.hasRun,
-          }
-        }}
-        onSelectDate={setSelectedDate}
-        onOpenCalendar={() => {
-          void window.desktop?.listIntentTodoCalendar?.().then((cal) => {
-            if (Array.isArray(cal)) setCalendarDays(cal)
-          })
-        }}
-        rightSlot={
+    <DeskDatePageShell
+      pageClassName="intent-todo-page"
+      hidden={false}
+      ariaLabel={t('intentTodo.pageTitle')}
+      selectedDate={selectedDate}
+      todayDate={todayLogicalDate}
+      disableFuture
+      calendarMarkers={calendarMarkers}
+      getDayState={(dateStr) => {
+        const info = calendarDayMap.get(dateStr)
+        if (!info) return {}
+        return {
+          hasPending: info.pendingCount > 0,
+          allCleared: info.allCleared,
+          hasActivity: info.hasRun,
+        }
+      }}
+      onSelectDate={setSelectedDate}
+      onOpenCalendar={() => {
+        void window.desktop?.listIntentTodoCalendar?.().then((cal) => {
+          if (Array.isArray(cal)) setCalendarDays(cal)
+        })
+      }}
+      topbarRightSlot={
+        <button
+          type="button"
+          className={`intent-todo-topbar-refresh${isAnalyzing ? ' is-spinning' : ''}`}
+          disabled={isAnalyzing || needsConsent}
+          onClick={() => void handleRefresh()}
+        >
+          <IconInline name="refresh" />
+          <span>{isAnalyzing ? t('intentTodo.refreshing') : t('intentTodo.refreshNow')}</span>
+        </button>
+      }
+      heroMeta={
+        overview?.snapshot
+          ? t('intentTodo.heroCoverage', {
+              n: overview.snapshot.stats.newHumanEntries,
+              priv: overview.snapshot.stats.skippedPrivate,
+            })
+          : undefined
+      }
+      heroSubline={
+        overview && overview.todayTotalCount > 0 ? (
+          <div className="intent-todo-hero-left">
+            <span>
+              {t('intentTodo.dayProgress', {
+                decided: overview.todayDecidedCount,
+                total: overview.todayTotalCount,
+              })}
+            </span>
+          </div>
+        ) : null
+      }
+      heroRightRef={settingsAnchorRef}
+      heroRight={
+        <div className="intent-todo-hero-right">
+          {renderStateBadge()}
           <button
             type="button"
-            className={`intent-todo-topbar-refresh${isAnalyzing ? ' is-spinning' : ''}`}
-            disabled={isAnalyzing || needsConsent}
-            onClick={() => void handleRefresh()}
+            className="intent-todo-icon-btn"
+            title={t('intentTodo.settingsTitle')}
+            aria-label={t('intentTodo.settingsTitle')}
+            aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen((open) => !open)}
           >
-            <IconInline name="refresh" />
-            <span>{isAnalyzing ? t('intentTodo.refreshing') : t('intentTodo.refreshNow')}</span>
+            <IconInline name="settings" />
           </button>
-        }
-      />
 
-      <div className="intent-todo-scroll-canvas">
-        <div className="intent-todo-canvas-inner">
-          <div className="intent-todo-hero">
-            <div className="intent-todo-hero-left">
-              <div className="intent-todo-hero-title-row">
-                <h1 className="intent-todo-hero-date">{formatJournalHeroDate(selectedDate)}</h1>
-                <span className="intent-todo-hero-meta">
-                  {formatWeekdayLabel(selectedDate, locale)}
-                  {overview?.snapshot
-                    ? ` · ${t('intentTodo.heroCoverage', {
-                        n: overview.snapshot.stats.newHumanEntries,
-                        priv: overview.snapshot.stats.skippedPrivate,
-                      })}`
-                    : ''}
-                </span>
-              </div>
+          {settingsOpen && overview ? (
+            <div className="intent-todo-settings-popover" role="dialog">
+              <label className="intent-todo-settings-row">
+                <span>{t('intentTodo.autoAnalyzeLabel')}</span>
+                <input
+                  type="checkbox"
+                  checked={overview.config.enabled}
+                  onChange={() => void handleToggleAutoEnabled()}
+                />
+              </label>
+              <p className="intent-todo-settings-hint">{t('intentTodo.scheduleTip')}</p>
 
-              <div className="intent-todo-hero-sub">
-                <label className="intent-todo-model-picker" title={t('intentTodo.modelPickerHint')}>
-                  <select
-                    className="intent-todo-model-select"
-                    aria-label={t('intentTodo.modelPickerLabel')}
-                    disabled={isAnalyzing}
-                    value={selectedModelPickKey}
-                    onChange={(e) => void handleSelectCloudModel(e.target.value)}
+              <div className="intent-todo-settings-divider" />
+
+              <label className="intent-todo-settings-field">
+                <span>{t('intentTodo.modelPickerLabel')}</span>
+                <select
+                  className="intent-todo-select"
+                  disabled={isAnalyzing}
+                  value={selectedModelPickKey}
+                  onChange={(e) => void handleSelectCloudModel(e.target.value)}
+                >
+                  <option value="">
+                    {t('intentTodo.modelFollowGlobal', { model: defaultModelDisplay })}
+                  </option>
+                  {cloudModelRows.map((row) => {
+                    const provName = providerNameById.get(row.providerId) || row.providerId
+                    return (
+                      <option key={row.pickKey} value={row.pickKey}>
+                        {provName} · {row.anthropicModelId}
+                      </option>
+                    )
+                  })}
+                </select>
+              </label>
+              <p className="intent-todo-settings-hint">{t('intentTodo.modelPickerHint')}</p>
+
+              <div className="intent-todo-settings-actions">
+                <button
+                  type="button"
+                  className="intent-todo-btn is-primary-solid"
+                  disabled={isAnalyzing || needsConsent}
+                  onClick={() => {
+                    setSettingsOpen(false)
+                    void handleRefresh()
+                  }}
+                >
+                  {isAnalyzing ? t('intentTodo.refreshing') : t('intentTodo.runNowBtn')}
+                </button>
+                {onOpenModelSettings ? (
+                  <button
+                    type="button"
+                    className="intent-todo-btn"
+                    onClick={() => {
+                      setSettingsOpen(false)
+                      onOpenModelSettings()
+                    }}
                   >
-                    <option value="">
-                      {t('intentTodo.modelFollowGlobal', { model: defaultModelDisplay })}
-                    </option>
-                    {cloudModelRows.map((row) => {
-                      const provName = providerNameById.get(row.providerId) || row.providerId
-                      return (
-                        <option key={row.pickKey} value={row.pickKey}>
-                          {provName} · {row.anthropicModelId}
-                        </option>
-                      )
-                    })}
-                  </select>
-                </label>
-                {overview && overview.todayTotalCount > 0 ? (
-                  <span>
-                    {t('intentTodo.dayProgress', {
-                      decided: overview.todayDecidedCount,
-                      total: overview.todayTotalCount,
-                    })}
-                  </span>
+                    {t('intentTodo.manageCloudModels')}
+                  </button>
                 ) : null}
               </div>
             </div>
-
-            <div className="intent-todo-hero-right" ref={settingsAnchorRef}>
-              {renderStateBadge()}
+          ) : null}
+        </div>
+      }
+      overlays={
+        toast ? (
+          <div className="intent-todo-toast" role="status">
+            <span>{toast.message}</span>
+            {toast.projectId && toast.threadId ? (
               <button
                 type="button"
-                className="intent-todo-icon-btn"
-                title={t('intentTodo.settingsTitle')}
-                aria-label={t('intentTodo.settingsTitle')}
-                aria-expanded={settingsOpen}
-                onClick={() => setSettingsOpen((open) => !open)}
+                className="intent-todo-toast-action"
+                onClick={() => {
+                  onOpenDispatchedThread?.(toast.projectId!, toast.threadId!)
+                  setToast(null)
+                }}
               >
-                <IconInline name="settings" />
+                {t('intentTodo.openDispatchedThread')}
               </button>
+            ) : null}
+          </div>
+        ) : null
+      }
+    >
+      {needsConsent && overview ? (
+        <div className="intent-todo-banner">
+          <div className="intent-todo-banner-copy">
+            <p className="intent-todo-banner-title">{t('intentTodo.consentTitle')}</p>
+            <p className="intent-todo-banner-desc">
+              {t('intentTodo.consentDesc', { provider: overview.providerName })}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="intent-todo-btn is-primary-solid"
+            onClick={() => void handleConsentAccept()}
+          >
+            {t('intentTodo.consentAccept')}
+          </button>
+        </div>
+      ) : null}
 
-              {settingsOpen && overview ? (
-                <div className="intent-todo-settings-popover" role="dialog">
-                  <label className="intent-todo-settings-row">
-                    <span>{t('intentTodo.autoAnalyzeLabel')}</span>
-                    <input
-                      type="checkbox"
-                      checked={overview.config.enabled}
-                      onChange={() => void handleToggleAutoEnabled()}
-                    />
-                  </label>
-                  <p className="intent-todo-settings-hint">{t('intentTodo.scheduleTip')}</p>
+      {overview?.runState === 'failed' || overview?.runState === 'needs_config' ? (
+        <div className="intent-todo-banner is-error">
+          <div className="intent-todo-banner-copy">
+            <p className="intent-todo-banner-title">
+              {overview.runState === 'needs_config'
+                ? t('intentTodo.stateNeedsConfig')
+                : t('intentTodo.stateFailed')}
+            </p>
+            {overview.runError ? (
+              <p className="intent-todo-banner-desc">{overview.runError}</p>
+            ) : null}
+          </div>
+          {overview.runState === 'needs_config' && onOpenModelSettings ? (
+            <button
+              type="button"
+              className="intent-todo-btn"
+              onClick={onOpenModelSettings}
+            >
+              {t('intentTodo.goConfigureModel')}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="intent-todo-btn"
+              onClick={() => void handleRefresh()}
+            >
+              {t('intentTodo.retryBtn')}
+            </button>
+          )}
+        </div>
+      ) : null}
 
-                  <div className="intent-todo-settings-divider" />
+      {!isToday ? (
+        <div className="intent-todo-banner is-readonly">
+          <span>{t('intentTodo.historyViewingNotice', { date: selectedDate })}</span>
+          <button
+            type="button"
+            className="intent-todo-footer-link"
+            onClick={() => setSelectedDate(todayLogicalDate)}
+          >
+            {t('journal.jumpToday')}
+          </button>
+        </div>
+      ) : null}
 
-                  <label className="intent-todo-settings-field">
-                    <span>{t('intentTodo.modelPickerLabel')}</span>
-                    <select
-                      className="intent-todo-select"
-                      disabled={isAnalyzing}
-                      value={selectedModelPickKey}
-                      onChange={(e) => void handleSelectCloudModel(e.target.value)}
-                    >
-                      <option value="">
-                        {t('intentTodo.modelFollowGlobal', { model: defaultModelDisplay })}
-                      </option>
-                      {cloudModelRows.map((row) => {
-                        const provName = providerNameById.get(row.providerId) || row.providerId
-                        return (
-                          <option key={row.pickKey} value={row.pickKey}>
-                            {provName} · {row.anthropicModelId}
-                          </option>
-                        )
-                      })}
-                    </select>
-                  </label>
-                  <p className="intent-todo-settings-hint">{t('intentTodo.modelPickerHint')}</p>
-
-                  <div className="intent-todo-settings-actions">
-                    <button
-                      type="button"
-                      className="intent-todo-btn is-primary-solid"
-                      disabled={isAnalyzing || needsConsent}
-                      onClick={() => {
-                        setSettingsOpen(false)
-                        void handleRefresh()
-                      }}
-                    >
-                      {isAnalyzing ? t('intentTodo.refreshing') : t('intentTodo.runNowBtn')}
-                    </button>
-                    {onOpenModelSettings ? (
-                      <button
-                        type="button"
-                        className="intent-todo-btn"
-                        onClick={() => {
-                          setSettingsOpen(false)
-                          onOpenModelSettings()
-                        }}
-                      >
-                        {t('intentTodo.manageCloudModels')}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-            </div>
+      {loading ? (
+        <div className="intent-todo-empty">
+          <p className="intent-todo-empty-title">{t('journal.loadingDay')}</p>
+        </div>
+      ) : !overview ? null : (
+        <>
+          <div className="intent-todo-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'pending'}
+              className={`intent-todo-tab${activeTab === 'pending' ? ' is-active' : ''}`}
+              onClick={() => setActiveTab('pending')}
+            >
+              <span>{t(isToday ? 'intentTodo.tabPendingToday' : 'intentTodo.tabPendingDay')}</span>
+              <span className="intent-todo-tab-count">{overview.pendingItems.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'active'}
+              className={`intent-todo-tab${activeTab === 'active' ? ' is-active' : ''}`}
+              onClick={() => setActiveTab('active')}
+            >
+              <span>{t('intentTodo.tabActive')}</span>
+              <span className="intent-todo-tab-count">{overview.activeItems.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'resolved'}
+              className={`intent-todo-tab${activeTab === 'resolved' ? ' is-active' : ''}`}
+              onClick={() => setActiveTab('resolved')}
+            >
+              <span>{t('intentTodo.tabResolved')}</span>
+              <span className="intent-todo-tab-count">{overview.resolvedItems.length}</span>
+            </button>
           </div>
 
-          {needsConsent && overview ? (
-            <div className="intent-todo-banner">
-              <div className="intent-todo-banner-copy">
-                <p className="intent-todo-banner-title">{t('intentTodo.consentTitle')}</p>
-                <p className="intent-todo-banner-desc">
-                  {t('intentTodo.consentDesc', { provider: overview.providerName })}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="intent-todo-btn is-primary-solid"
-                onClick={() => void handleConsentAccept()}
-              >
-                {t('intentTodo.consentAccept')}
-              </button>
-            </div>
-          ) : null}
-
-          {overview?.runState === 'failed' || overview?.runState === 'needs_config' ? (
-            <div className="intent-todo-banner is-error">
-              <div className="intent-todo-banner-copy">
-                <p className="intent-todo-banner-title">
-                  {overview.runState === 'needs_config'
-                    ? t('intentTodo.stateNeedsConfig')
-                    : t('intentTodo.stateFailed')}
-                </p>
-                {overview.runError ? (
-                  <p className="intent-todo-banner-desc">{overview.runError}</p>
-                ) : null}
-              </div>
-              {overview.runState === 'needs_config' && onOpenModelSettings ? (
-                <button
-                  type="button"
-                  className="intent-todo-btn"
-                  onClick={onOpenModelSettings}
-                >
-                  {t('intentTodo.goConfigureModel')}
-                </button>
+          {activeTab === 'pending' ? (
+            <section className="intent-todo-section">
+              {overview.pendingItems.length === 0 ? (
+                <div className="intent-todo-empty">
+                  <p className="intent-todo-empty-title">
+                    {isAnalyzing
+                      ? t('intentTodo.emptyAnalyzingTitle')
+                      : overview.snapshot
+                        ? t('intentTodo.emptyClearedTitle')
+                        : t('intentTodo.emptyNoRunTitle')}
+                  </p>
+                  <p className="intent-todo-empty-sub">
+                    {isAnalyzing
+                      ? t('intentTodo.emptyAnalyzingSub')
+                      : overview.snapshot
+                        ? t('intentTodo.emptyClearedSub')
+                        : t('intentTodo.emptyNoRunSub')}
+                  </p>
+                </div>
               ) : (
-                <button
-                  type="button"
-                  className="intent-todo-btn"
-                  onClick={() => void handleRefresh()}
-                >
-                  {t('intentTodo.retryBtn')}
-                </button>
+                <div className="intent-todo-list">
+                  {overview.pendingItems.map((item) => renderItemRow(item, 'pending'))}
+                </div>
               )}
-            </div>
-          ) : null}
+            </section>
+          ) : activeTab === 'active' ? (
+            <section className="intent-todo-section">
+              {overview.snoozedLaterCount > 0 ? (
+                <div className="intent-todo-section-head">
+                  <span className="intent-todo-reason-line">
+                    {t('intentTodo.snoozedCountHint', { n: overview.snoozedLaterCount })}
+                  </span>
+                </div>
+              ) : null}
+              {overview.activeItems.length === 0 ? (
+                <div className="intent-todo-empty">
+                  <p className="intent-todo-empty-title">{t('intentTodo.emptyActiveTitle')}</p>
+                  <p className="intent-todo-empty-sub">{t('intentTodo.emptyActiveSub')}</p>
+                </div>
+              ) : (
+                <div className="intent-todo-list">
+                  {overview.activeItems.map((item) => renderItemRow(item, 'active'))}
+                </div>
+              )}
+            </section>
+          ) : (
+            <section className="intent-todo-section">
+              {overview.resolvedItems.length === 0 ? (
+                <div className="intent-todo-empty">
+                  <p className="intent-todo-empty-title">{t('intentTodo.emptyResolvedTitle')}</p>
+                  <p className="intent-todo-empty-sub">{t('intentTodo.emptyResolvedSub')}</p>
+                </div>
+              ) : (
+                <div className="intent-todo-list">
+                  {overview.resolvedItems.map((item) => renderItemRow(item, 'resolved'))}
+                </div>
+              )}
+            </section>
+          )}
 
-          {!isToday ? (
-            <div className="intent-todo-banner is-readonly">
-              <span>{t('intentTodo.historyViewingNotice', { date: selectedDate })}</span>
+          <footer className="intent-todo-footer">
+            <span>
+              {overview.snapshot
+                ? t('intentTodo.footerSummary', {
+                    noise: overview.snapshot.stats.ignoredNoiseCount,
+                    priv: overview.snapshot.stats.skippedPrivate,
+                    archived: overview.autoArchivedCount,
+                  })
+                : t('intentTodo.footerNoReport')}
+            </span>
+            {overview.snapshot?.reportPath ? (
               <button
                 type="button"
                 className="intent-todo-footer-link"
-                onClick={() => setSelectedDate(todayLogicalDate)}
+                onClick={() => void handleOpenReport()}
               >
-                {t('journal.jumpToday')}
+                {t('intentTodo.openMarkdownReport')}
               </button>
-            </div>
-          ) : null}
-
-          {loading ? (
-            <div className="intent-todo-empty">
-              <p className="intent-todo-empty-title">{t('journal.loadingDay')}</p>
-            </div>
-          ) : !overview ? null : (
-            <>
-              <div className="intent-todo-tabs" role="tablist">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'pending'}
-                  className={`intent-todo-tab${activeTab === 'pending' ? ' is-active' : ''}`}
-                  onClick={() => setActiveTab('pending')}
-                >
-                  <span>{t(isToday ? 'intentTodo.tabPendingToday' : 'intentTodo.tabPendingDay')}</span>
-                  <span className="intent-todo-tab-count">{overview.pendingItems.length}</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'active'}
-                  className={`intent-todo-tab${activeTab === 'active' ? ' is-active' : ''}`}
-                  onClick={() => setActiveTab('active')}
-                >
-                  <span>{t('intentTodo.tabActive')}</span>
-                  <span className="intent-todo-tab-count">{overview.activeItems.length}</span>
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={activeTab === 'resolved'}
-                  className={`intent-todo-tab${activeTab === 'resolved' ? ' is-active' : ''}`}
-                  onClick={() => setActiveTab('resolved')}
-                >
-                  <span>{t('intentTodo.tabResolved')}</span>
-                  <span className="intent-todo-tab-count">{overview.resolvedItems.length}</span>
-                </button>
-              </div>
-
-              {activeTab === 'pending' ? (
-                <section className="intent-todo-section">
-                  {overview.pendingItems.length === 0 ? (
-                    <div className="intent-todo-empty">
-                      <p className="intent-todo-empty-title">
-                        {isAnalyzing
-                          ? t('intentTodo.emptyAnalyzingTitle')
-                          : overview.snapshot
-                            ? t('intentTodo.emptyClearedTitle')
-                            : t('intentTodo.emptyNoRunTitle')}
-                      </p>
-                      <p className="intent-todo-empty-sub">
-                        {isAnalyzing
-                          ? t('intentTodo.emptyAnalyzingSub')
-                          : overview.snapshot
-                            ? t('intentTodo.emptyClearedSub')
-                            : t('intentTodo.emptyNoRunSub')}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="intent-todo-list">
-                      {overview.pendingItems.map((item) => renderItemRow(item, 'pending'))}
-                    </div>
-                  )}
-                </section>
-              ) : activeTab === 'active' ? (
-                <section className="intent-todo-section">
-                  {overview.snoozedLaterCount > 0 ? (
-                    <div className="intent-todo-section-head">
-                      <span className="intent-todo-reason-line">
-                        {t('intentTodo.snoozedCountHint', { n: overview.snoozedLaterCount })}
-                      </span>
-                    </div>
-                  ) : null}
-                  {overview.activeItems.length === 0 ? (
-                    <div className="intent-todo-empty">
-                      <p className="intent-todo-empty-title">{t('intentTodo.emptyActiveTitle')}</p>
-                      <p className="intent-todo-empty-sub">{t('intentTodo.emptyActiveSub')}</p>
-                    </div>
-                  ) : (
-                    <div className="intent-todo-list">
-                      {overview.activeItems.map((item) => renderItemRow(item, 'active'))}
-                    </div>
-                  )}
-                </section>
-              ) : (
-                <section className="intent-todo-section">
-                  {overview.resolvedItems.length === 0 ? (
-                    <div className="intent-todo-empty">
-                      <p className="intent-todo-empty-title">{t('intentTodo.emptyResolvedTitle')}</p>
-                      <p className="intent-todo-empty-sub">{t('intentTodo.emptyResolvedSub')}</p>
-                    </div>
-                  ) : (
-                    <div className="intent-todo-list">
-                      {overview.resolvedItems.map((item) => renderItemRow(item, 'resolved'))}
-                    </div>
-                  )}
-                </section>
-              )}
-
-              <footer className="intent-todo-footer">
-                <span>
-                  {overview.snapshot
-                    ? t('intentTodo.footerSummary', {
-                        noise: overview.snapshot.stats.ignoredNoiseCount,
-                        priv: overview.snapshot.stats.skippedPrivate,
-                        archived: overview.autoArchivedCount,
-                      })
-                    : t('intentTodo.footerNoReport')}
-                </span>
-                {overview.snapshot?.reportPath ? (
-                  <button
-                    type="button"
-                    className="intent-todo-footer-link"
-                    onClick={() => void handleOpenReport()}
-                  >
-                    {t('intentTodo.openMarkdownReport')}
-                  </button>
-                ) : null}
-              </footer>
-            </>
-          )}
-        </div>
-      </div>
-
-      {toast ? (
-        <div className="intent-todo-toast" role="status">
-          <span>{toast.message}</span>
-          {toast.projectId && toast.threadId ? (
-            <button
-              type="button"
-              className="intent-todo-toast-action"
-              onClick={() => {
-                onOpenDispatchedThread?.(toast.projectId!, toast.threadId!)
-                setToast(null)
-              }}
-            >
-              {t('intentTodo.openDispatchedThread')}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
+            ) : null}
+          </footer>
+        </>
+      )}
+    </DeskDatePageShell>
   )
 }

@@ -4,7 +4,8 @@
  *   centered on Asia/Shanghai 04:00 logical-day cutover.
  * - Executes incremental journal intent analysis with serialized lock-safe merging.
  * - Dispatches confirmed tasks through the project chat broker with per-project serial queuing.
- *   Life-task breakdown uses plan mode and a separate working directory.
+ *   All dispatches inherit the user's global permission mode; life-task breakdown keeps a
+ *   separate working directory (`intent-todo-sandbox`) so it never touches journal files.
  * - Observes ProjectChatBroker snapshots to derive live dispatch runtime phases in Phase 1.
  */
 
@@ -109,7 +110,7 @@ export function buildSafeDispatchPrompt(item: IntentTodoItem, sandboxedLife = fa
       : actionKind === 'design'
         ? 'design（先调研并给出方案选项待确认，严禁直接写代码）'
         : actionKind === 'life'
-          ? 'life（生活/事务梳理，只读 plan 模式）'
+          ? 'life（生活/事务梳理，独立工作目录）'
           : 'implement（代码改动/修 Bug，须先核实落点一致再按最小范围实施）'
 
   const targetSurfaceLine = item.targetSurface?.trim()
@@ -132,7 +133,7 @@ export function buildSafeDispatchPrompt(item: IntentTodoItem, sandboxedLife = fa
   ].filter(Boolean)
 
   const opening = sandboxedLife
-    ? '这是一条来自个人时间日记的生活/事务待办。请先帮我梳理清晰的可执行步骤与关键确认点，等待我确认后再进一步推进（当前处于只读 plan 模式）。'
+    ? '这是一条来自个人时间日记的生活/事务待办。请先帮我梳理清晰的可执行步骤与关键确认点，等待我确认后再进一步推进（当前运行在独立沙箱工作目录，不访问代码仓与日记原文件）。'
     : actionKind === 'investigate'
       ? '这是一条「核实/调研型」工程待办。请仅核实当前仓库代码现状并向我汇报事实结论，严禁擅自修改代码；如发现确实需要改动，仅列出最小建议由我决定是否立项。'
       : actionKind === 'design'
@@ -487,6 +488,9 @@ export class IntentTodoService {
         prevSnapshot.modelUsed.trim().toLowerCase() !== modelName.trim().toLowerCase(),
     )
 
+    let committedBatches = 0
+    const deskRoot = this.options.journalStore.getDeskRoot()
+
     const result = await runIntentTodoAnalysis({
       journalStore: this.options.journalStore,
       projects,
@@ -503,6 +507,28 @@ export class IntentTodoService {
       callLlm: this.options.callLlm,
       gitLogFetcher: this.options.gitLogFetcher,
       forceReanalyze: modelChangedSinceLastRun,
+      onBatchComplete: async (batch) => {
+        await this.store.mergeAnalysisResult({
+          logicalDate: batch.logicalDate,
+          ranAt: batch.ranAt,
+          providerName: batch.providerName,
+          modelUsed: batch.modelUsed,
+          processedHashes: batch.processedHashes,
+          processedBodyHashes: batch.processedBodyHashes,
+          candidates: batch.candidates,
+          stats: batch.stats,
+          deskRoot,
+          forceReanalyze: modelChangedSinceLastRun && batch.batchIndex === 0,
+        })
+        committedBatches += 1
+        if (batch.totalBatches > 1 && batch.batchIndex < batch.totalBatches - 1) {
+          this.emitChanged('analyzed')
+        }
+        return {
+          openItems: this.store.getOpenItemsForDedup(),
+          closedItems: this.store.getClosedItemsForDate(targetDate),
+        }
+      },
     })
 
     if (!result.ok) {
@@ -529,18 +555,21 @@ export class IntentTodoService {
       }
     }
 
-    await this.store.mergeAnalysisResult({
-      logicalDate: result.logicalDate,
-      ranAt: result.ranAt,
-      providerName: result.providerName,
-      modelUsed: result.modelUsed,
-      processedHashes: result.processedHashes,
-      processedBodyHashes: result.processedBodyHashes,
-      candidates: result.candidates,
-      stats: result.stats,
-      deskRoot: this.options.journalStore.getDeskRoot(),
-      forceReanalyze: modelChangedSinceLastRun,
-    })
+    // When prepared.length === 0 (short-circuit), no batch callback fired — still persist snapshot/skipped hashes.
+    if (committedBatches === 0) {
+      await this.store.mergeAnalysisResult({
+        logicalDate: result.logicalDate,
+        ranAt: result.ranAt,
+        providerName: result.providerName,
+        modelUsed: result.modelUsed,
+        processedHashes: result.processedHashes,
+        processedBodyHashes: result.processedBodyHashes,
+        candidates: result.candidates,
+        stats: result.stats,
+        deskRoot,
+        forceReanalyze: modelChangedSinceLastRun,
+      })
+    }
 
     this.runState = 'ready'
     this.runError = null
@@ -555,8 +584,8 @@ export class IntentTodoService {
 
   /**
    * Main-process safe dispatch with per-project serial queueing.
-   * Project dispatch inherits the same global mode as ordinary project chat.
-   * Life-task breakdown overrides the mode to plan and uses a separate working directory.
+   * Both project and life dispatches inherit the user's global permission mode;
+   * life-task breakdown keeps a separate working directory (`intent-todo-sandbox`).
    */
   async dispatchItem(params: {
     itemId: string
@@ -671,7 +700,7 @@ export class IntentTodoService {
         threadId: created.value.threadId,
         text: prompt,
       },
-      sandboxedLife ? { permissionModeOverride: 'plan', cwdOverride: this.sandboxDir } : undefined,
+      sandboxedLife ? { cwdOverride: this.sandboxDir } : undefined,
     )
 
     if (!submitted.ok) {
