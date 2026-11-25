@@ -675,17 +675,67 @@
 
 /* --- Inline First-Dispatch Project Confirmation Bar --- */
 
-.intent-todo-confirm-bar {
+.intent-todo-dispatch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--j-line);
+  background: var(--j-surface-soft, rgba(128, 128, 128, 0.05));
+}
+
+.intent-todo-dispatch-panel-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 9px 16px;
-  border-top: 1px solid var(--j-line);
-  background: var(--j-amber-soft);
+  gap: 8px;
+}
+
+.intent-todo-dispatch-label {
   font-size: 12px;
+  color: var(--j-ink-2);
+}
+
+.intent-todo-btn-magic {
+  border-color: color-mix(in srgb, #8b5cf6 35%, var(--j-line-strong));
+  background: color-mix(in srgb, #8b5cf6 12%, transparent);
+  color: color-mix(in srgb, #8b5cf6 85%, var(--j-ink-1));
+}
+
+.intent-todo-btn-magic:hover:not(:disabled) {
+  background: color-mix(in srgb, #8b5cf6 20%, transparent);
+}
+
+.intent-todo-dispatch-textarea {
+  width: 100%;
+  min-height: 128px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-surface);
   color: var(--j-ink-1);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.intent-todo-dispatch-textarea:focus {
+  outline: none;
+  border-color: var(--j-accent, #4da6ff);
+}
+
+.intent-todo-dispatch-error {
+  font-size: 12px;
+  color: var(--color-token-danger-foreground, #e02e2a);
+}
+
+.intent-todo-dispatch-panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .intent-todo-confirm-controls {

@@ -15,6 +15,7 @@ import type { ChatModelPick, ClaudeAgentSettingsSnapshot } from '../../claude-ch
 import { IconInline } from '../../icon-inline'
 import { useI18n } from '../../i18n/i18n'
 import {
+  buildIntentTodoDraftPrompt,
   INTENT_TODO_CUTOVER_HOUR,
   type IntentTodoCalendarDay,
   type IntentTodoDecisionInput,
@@ -39,6 +40,11 @@ export type IntentTodoPageProps = {
 type DispatchConfirmState = {
   itemId: string
   projectId: string
+  prompt: string
+  polished: boolean
+  polishing: boolean
+  copied: boolean
+  error: string | null
 }
 
 type ToastState = {
@@ -353,7 +359,12 @@ export function IntentTodoPage({
     })
   }
 
-  const executeDispatch = async (item: IntentTodoItem, projectId?: string, sandboxedLife = false) => {
+  const executeDispatch = async (
+    item: IntentTodoItem,
+    projectId?: string,
+    sandboxedLife = false,
+    promptOverride?: string,
+  ) => {
     const api = window.desktop
     if (!api?.dispatchIntentTodo) return
     await withBusyItem(item.id, async () => {
@@ -362,6 +373,7 @@ export function IntentTodoPage({
         projectId,
         sandboxedLife,
         selectedDate,
+        promptOverride: promptOverride?.trim() ? promptOverride.trim() : undefined,
       })
       if (res.ok) {
         setConfirmDispatch(null)
@@ -383,15 +395,67 @@ export function IntentTodoPage({
       void handleDecide(item.id, { action: 'now' })
       return
     }
-    const targetProjectId = item.confirmedProjectId || item.suggestedProjectId
-    // First-time dispatch to an AI-inferred or unmatched project requires explicit confirmation
-    const needsConfirm = !item.projectExplicitlyBound && !item.confirmedProjectId
-    if (!targetProjectId || needsConfirm) {
-      const fallbackProjectId = targetProjectId || projects[0]?.id || ''
-      setConfirmDispatch({ itemId: item.id, projectId: fallbackProjectId })
+    if (confirmDispatch?.itemId === item.id) {
+      setConfirmDispatch(null)
       return
     }
-    void executeDispatch(item, targetProjectId, false)
+    const targetProjectId = item.confirmedProjectId || item.suggestedProjectId || projects[0]?.id || ''
+    const targetProjectName = projects.find((p) => p.id === targetProjectId)?.name
+    setConfirmDispatch({
+      itemId: item.id,
+      projectId: targetProjectId,
+      prompt: buildIntentTodoDraftPrompt(item, targetProjectName),
+      polished: false,
+      polishing: false,
+      copied: false,
+      error: null,
+    })
+  }
+
+  const handlePolishDispatchPrompt = async (item: IntentTodoItem) => {
+    const api = window.desktop
+    if (!api?.polishIntentTodoPrompt || !confirmDispatch || confirmDispatch.itemId !== item.id) return
+    const targetProjectName = projects.find((p) => p.id === confirmDispatch.projectId)?.name
+    setConfirmDispatch((prev) =>
+      prev && prev.itemId === item.id ? { ...prev, polishing: true, error: null } : prev,
+    )
+    try {
+      const res = await api.polishIntentTodoPrompt({
+        itemId: item.id,
+        projectName: targetProjectName,
+        currentPrompt: confirmDispatch.prompt,
+      })
+      if (res.ok) {
+        setConfirmDispatch((prev) =>
+          prev && prev.itemId === item.id
+            ? { ...prev, prompt: res.prompt, polished: true, polishing: false, error: null }
+            : prev,
+        )
+      } else {
+        setConfirmDispatch((prev) =>
+          prev && prev.itemId === item.id ? { ...prev, polishing: false, error: res.error } : prev,
+        )
+      }
+    } catch {
+      setConfirmDispatch((prev) =>
+        prev && prev.itemId === item.id
+          ? { ...prev, polishing: false, error: t('intentTodo.polishPromptFailed') }
+          : prev,
+      )
+    }
+  }
+
+  const handleCopyDispatchPrompt = async () => {
+    if (!confirmDispatch?.prompt.trim()) return
+    try {
+      await navigator.clipboard.writeText(confirmDispatch.prompt)
+      setConfirmDispatch((prev) => (prev ? { ...prev, copied: true } : prev))
+      window.setTimeout(() => {
+        setConfirmDispatch((prev) => (prev ? { ...prev, copied: false } : prev))
+      }, 1600)
+    } catch {
+      showToast({ message: t('intentTodo.copyPromptFailed') })
+    }
   }
 
   const handleOpenReport = async () => {
@@ -666,37 +730,87 @@ export function IntentTodoPage({
           </div>
         </div>
 
-        {confirmingThis ? (
-          <div className="intent-todo-confirm-bar">
-            <span>{t('intentTodo.confirmDispatchPrompt')}</span>
-            <div className="intent-todo-confirm-controls">
-              <select
-                className="intent-todo-select"
-                value={confirmDispatch.projectId}
-                onChange={(e) =>
-                  setConfirmDispatch({ itemId: item.id, projectId: e.target.value })
-                }
-              >
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="intent-todo-btn is-primary-solid"
-                disabled={!confirmDispatch.projectId || busy}
-                onClick={() => void executeDispatch(item, confirmDispatch.projectId, false)}
-              >
-                {t('intentTodo.confirmDispatchBtn')}
-              </button>
+        {confirmingThis && confirmDispatch ? (
+          <div className="intent-todo-dispatch-panel">
+            <div className="intent-todo-dispatch-panel-row">
+              <div className="intent-todo-confirm-controls">
+                <span className="intent-todo-dispatch-label">{t('intentTodo.targetProjectLabel')}</span>
+                <select
+                  className="intent-todo-select"
+                  value={confirmDispatch.projectId}
+                  onChange={(e) => {
+                    const nextProjectId = e.target.value
+                    setConfirmDispatch((prev) =>
+                      prev && prev.itemId === item.id ? { ...prev, projectId: nextProjectId } : prev,
+                    )
+                  }}
+                >
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="intent-todo-confirm-controls">
+                <button
+                  type="button"
+                  className={`intent-todo-btn intent-todo-btn-magic${confirmDispatch.polished ? ' is-polished' : ''}`}
+                  disabled={confirmDispatch.polishing || busy}
+                  onClick={() => void handlePolishDispatchPrompt(item)}
+                >
+                  <span>
+                    {confirmDispatch.polishing
+                      ? t('intentTodo.polishingPrompt')
+                      : confirmDispatch.polished
+                        ? t('intentTodo.repolishPromptBtn')
+                        : t('intentTodo.polishPromptBtn')}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="intent-todo-btn"
+                  onClick={() => setConfirmDispatch(null)}
+                >
+                  {t('journal.cancel')}
+                </button>
+              </div>
+            </div>
+
+            <textarea
+              className="intent-todo-dispatch-textarea"
+              rows={6}
+              value={confirmDispatch.prompt}
+              onChange={(e) => {
+                const nextPrompt = e.target.value
+                setConfirmDispatch((prev) =>
+                  prev && prev.itemId === item.id ? { ...prev, prompt: nextPrompt } : prev,
+                )
+              }}
+            />
+
+            {confirmDispatch.error ? (
+              <div className="intent-todo-dispatch-error">{confirmDispatch.error}</div>
+            ) : null}
+
+            <div className="intent-todo-dispatch-panel-foot">
               <button
                 type="button"
                 className="intent-todo-btn"
-                onClick={() => setConfirmDispatch(null)}
+                disabled={!confirmDispatch.prompt.trim()}
+                onClick={() => void handleCopyDispatchPrompt()}
               >
-                {t('journal.cancel')}
+                {confirmDispatch.copied ? t('intentTodo.copiedPromptBtn') : t('intentTodo.copyPromptBtn')}
+              </button>
+              <button
+                type="button"
+                className="intent-todo-btn is-primary-solid"
+                disabled={!confirmDispatch.projectId || !confirmDispatch.prompt.trim() || busy || confirmDispatch.polishing}
+                onClick={() =>
+                  void executeDispatch(item, confirmDispatch.projectId, false, confirmDispatch.prompt)
+                }
+              >
+                {t('intentTodo.confirmDispatchBtn')}
               </button>
             </div>
           </div>

@@ -153,6 +153,7 @@ export const DESKTOP_INVOKE_CHANNELS = {
   refreshIntentTodo: 'desktop:intent-todo:refresh',
   decideIntentTodo: 'desktop:intent-todo:decide',
   dispatchIntentTodo: 'desktop:intent-todo:dispatch',
+  polishIntentTodoPrompt: 'desktop:intent-todo:polish-prompt',
   getIntentTodoConfig: 'desktop:intent-todo:get-config',
   saveIntentTodoConfig: 'desktop:intent-todo:save-config',
   getLanguagePushOverview: 'desktop:language-push:get-overview',

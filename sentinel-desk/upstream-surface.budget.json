@@ -74,10 +74,10 @@
       "note": "desk wiring inside the base main process (also carries C-class edits: window-bounds memory + permissionMode)"
     },
     "electron/preload.ts": {
-      "added": 225,
+      "added": 235,
       "removed": 0,
       "category": "A",
-      "note": "desk IPC channels exposed to the renderer"
+      "note": "desk IPC channels exposed to the renderer (+polishIntentTodoPrompt & promptOverride)"
     },
     "electron/project-chat-broker.test.mjs": {
       "added": 9,
@@ -164,16 +164,16 @@
       "note": "desk view ids added to the base view union"
     },
     "src/desktop-api.ts": {
-      "added": 187,
+      "added": 195,
       "removed": 0,
       "category": "A",
-      "note": "desk IPC client surface"
+      "note": "desk IPC client surface (+polishIntentTodoPrompt & promptOverride)"
     },
     "src/desktop-seam.ts": {
-      "added": 50,
+      "added": 51,
       "removed": 0,
       "category": "A",
-      "note": "shared desk channel contract"
+      "note": "shared desk channel contract (+polishIntentTodoPrompt)"
     },
     "src/icons.ts": {
       "added": 22,

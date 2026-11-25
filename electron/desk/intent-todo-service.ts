@@ -31,6 +31,7 @@ import type {
   IntentTodoDispatchRuntimePhase,
   IntentTodoItem,
   IntentTodoOverview,
+  IntentTodoPolishPromptResult,
   IntentTodoRefreshResult,
   IntentTodoRunState,
 } from '../../src/intent-todo-contract'
@@ -46,7 +47,11 @@ import {
   getShanghaiLogicalDay,
   hasPassedShanghaiCutover,
 } from './intent-todo-time'
-import type { AnthropicCallOptions, AnthropicMessagesResult } from '../anthropic-messages-client'
+import {
+  callAnthropicMessages,
+  type AnthropicCallOptions,
+  type AnthropicMessagesResult,
+} from '../anthropic-messages-client'
 
 const SCHEDULER_TICK_MS = 60_000
 const MAX_AUTO_RETRIES_PER_DAY = 3
@@ -583,6 +588,71 @@ export class IntentTodoService {
   }
 
   /**
+   * Polishes a todo item's dispatch prompt into a crisp, copy-and-dispatch-ready engineering prompt
+   * using the configured cloud model. Strictly non-destructive: never reads or modifies journal text.
+   */
+  async polishDispatchPrompt(params: {
+    itemId: string
+    projectName?: string
+    currentPrompt?: string
+  }): Promise<IntentTodoPolishPromptResult> {
+    const item = this.store.getItem(params.itemId)
+    if (!item) {
+      return { ok: false, error: `未找到待办条目：${params.itemId}` }
+    }
+
+    const { config } = this.resolveProviderDisplay()
+    if (!config.apiKey?.trim() && !config.authToken?.trim()) {
+      return { ok: false, error: '尚未配置云端模型凭据，请先在设置中配置模型。' }
+    }
+
+    const basePrompt = buildSafeDispatchPrompt(item, item.track === 'life')
+    const currentDraft = typeof params.currentPrompt === 'string' && params.currentPrompt.trim()
+      ? scrubSecrets(params.currentPrompt.trim())
+      : ''
+    const projectLabel = typeof params.projectName === 'string' && params.projectName.trim()
+      ? scrubSecrets(params.projectName.trim())
+      : ''
+
+    const system = [
+      '你是一位资深工程架构师与提示词工程师。',
+      '你的任务是将用户的意图待办润色成一段可直接发给 Coding Agent 执行的「高质量中文工程提示词」。',
+      '硬性要求：',
+      '1. 严格保留原有的动作形态（investigate 只查不改 / design 先给方案不写代码 / implement 最小范围落地）、归属页面、完成标准、明确不做与反模式红线，绝不擅自扩大范围。',
+      '2. 使用清晰的分段标签（【任务目标】【落点与范围】【执行要求】【完成标准】【红线约束】），去除口语冗余，补充必要的专业术语与验证要求。',
+      '3. 绝不输出客套话、解释说明或 Markdown 代码围栏，只输出最终可直接复制/派发的提示词正文。',
+    ].join('\n')
+
+    const userMessage = [
+      projectLabel ? `目标项目：${projectLabel}` : '',
+      '--- 结构化待办契约 ---',
+      basePrompt,
+      currentDraft ? `\n--- 用户当前草稿 ---\n${currentDraft}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    const caller = this.options.callLlm ?? callAnthropicMessages
+    const res = await caller(config, {
+      system,
+      messages: [{ role: 'user', content: userMessage }],
+      maxTokens: 1600,
+      temperature: 0.2,
+    })
+
+    if (!res.ok) {
+      return { ok: false, error: res.message || '润色提示词失败，请稍后重试。' }
+    }
+
+    const polishedText = scrubSecrets(res.text.trim())
+    if (!polishedText) {
+      return { ok: false, error: '模型未返回有效润色结果。' }
+    }
+
+    return { ok: true, prompt: polishedText, polished: true }
+  }
+
+  /**
    * Main-process safe dispatch with per-project serial queueing.
    * Both project and life dispatches inherit the user's global permission mode;
    * life-task breakdown keeps a separate working directory (`intent-todo-sandbox`).
@@ -592,6 +662,7 @@ export class IntentTodoService {
     projectId?: string
     sandboxedLife?: boolean
     selectedDate?: string
+    promptOverride?: string
   }): Promise<IntentTodoDispatchResult> {
     const broker = this.options.getBroker()
     if (!broker) {
@@ -645,6 +716,7 @@ export class IntentTodoService {
           targetProject!,
           sandboxedLife,
           params.selectedDate,
+          params.promptOverride,
         ),
       () =>
         this.executeDispatch(
@@ -653,6 +725,7 @@ export class IntentTodoService {
           targetProject!,
           sandboxedLife,
           params.selectedDate,
+          params.promptOverride,
         ),
     )
 
@@ -673,6 +746,7 @@ export class IntentTodoService {
     targetProject: WorkspaceProject,
     sandboxedLife: boolean,
     selectedDate?: string,
+    promptOverride?: string,
   ): Promise<IntentTodoDispatchResult> {
     if (sandboxedLife && !existsSync(this.sandboxDir)) {
       mkdirSync(this.sandboxDir, { recursive: true })
@@ -693,7 +767,8 @@ export class IntentTodoService {
       }
     }
 
-    const prompt = buildSafeDispatchPrompt(item, sandboxedLife)
+    const trimmedOverride = typeof promptOverride === 'string' ? scrubSecrets(promptOverride.trim()) : ''
+    const prompt = trimmedOverride || buildSafeDispatchPrompt(item, sandboxedLife)
     const submitted = await broker.submitRun(
       {
         projectId: targetProject.id,

@@ -221,6 +221,107 @@ test('dispatch: no raw journal text is persisted into items.json', async () => {
     assert.doesNotMatch(text, /不要裁切上下两端/)
     assert.doesNotMatch(text, /<untrusted_journal_quote/)
     assert.equal(dispatchedCalls[0].context?.permissionModeOverride, undefined, 'project dispatch inherits the global mode')
+
+    // Verify promptOverride is scrubbed and forwarded directly when provided
+    const res2 = await service.dispatchItem({
+      itemId,
+      projectId: 'p_agentos',
+      promptOverride: '【任务目标】自定义润色提示词\n测试脱敏 sk-ant-api03-1234567890abcdef1234567890',
+    })
+    assert.equal(res2.ok, true)
+    assert.equal(dispatchedCalls.length, 2)
+    assert.match(dispatchedCalls[1].input.text, /【任务目标】自定义润色提示词/)
+    assert.doesNotMatch(dispatchedCalls[1].input.text, /sk-ant-api03-/)
+  } finally {
+    rmSync(userDataPath, { recursive: true, force: true })
+    rmSync(deskRoot, { recursive: true, force: true })
+  }
+})
+
+test('IntentTodoService.polishDispatchPrompt polishes engineering prompt via cloud model and scrubs secrets', async () => {
+  const { IntentTodoService } = loadTsModule(resolve(rootDir, 'electron/desk/intent-todo-service.ts'))
+  const userDataPath = mkdtempSync(join(tmpdir(), 'agentos-it-polish-'))
+  const deskRoot = mkdtempSync(join(tmpdir(), 'agentos-desk-polish-'))
+  let llmCalls = 0
+  try {
+    const service = new IntentTodoService({
+      userDataPath,
+      journalStore: {
+        getDeskRoot: () => deskRoot,
+        getDay: () => ({ ok: true, date: '2026-11-24', entries: [] }),
+      },
+      settingsStore: {
+        getSnapshot: () => ({
+          settings: {
+            activeProviderId: 'p1',
+            activeAnthropicModel: 'claude-sonnet',
+            providers: [{ id: 'p1', name: 'Test', model: 'claude-sonnet' }],
+          },
+        }),
+        resolve: () => ({
+          apiKey: 'test-key',
+          authToken: '',
+          baseUrl: 'https://api.example.com',
+          model: 'claude-sonnet',
+          configSource: 'settings',
+        }),
+      },
+      getWorkspaceState: () => ({ projects: [] }),
+      getBroker: () => null,
+      callLlm: async (_cfg, req) => {
+        llmCalls += 1
+        assert.match(req.system || '', /工程提示词/)
+        return {
+          ok: true,
+          text: '【任务目标】润色后的精准工程提示词\n【红线约束】不覆盖原日记，脱敏测试 sk-ant-api03-abcdef1234567890abcdef',
+          stopReason: 'end_turn',
+        }
+      },
+    })
+
+    const seed = await service.store.mergeAnalysisResult({
+      logicalDate: '2026-11-24',
+      modelUsed: 'claude-sonnet',
+      processedHashes: [],
+      deskRoot,
+      stats: {
+        scannedEntries: 1,
+        newHumanEntries: 1,
+        skippedPrivate: 0,
+        suspectedAiPaste: 0,
+        ignoredNoiseCount: 0,
+        durationMs: 3,
+      },
+      candidates: [
+        {
+          title: '设计意图待办润色提示词',
+          reason: '手动派发更稳妥',
+          track: 'engineering',
+          actionKind: 'implement',
+          urgency: 'medium',
+          antiPatterns: ['不得覆盖原日记'],
+          anchors: [
+            {
+              date: '2026-11-24',
+              time: '11:13',
+              entryId: 'je_20261124_1113_test',
+              contentHash: 'h2',
+              flags: ['人类手写'],
+            },
+          ],
+        },
+      ],
+    })
+
+    const res = await service.polishDispatchPrompt({
+      itemId: seed.createdIds[0],
+      projectName: 'AgentOS',
+    })
+    assert.equal(res.ok, true)
+    assert.equal(res.polished, true)
+    assert.equal(llmCalls, 1)
+    assert.match(res.prompt, /【任务目标】润色后的精准工程提示词/)
+    assert.doesNotMatch(res.prompt, /sk-ant-api03-/)
   } finally {
     rmSync(userDataPath, { recursive: true, force: true })
     rmSync(deskRoot, { recursive: true, force: true })

@@ -64,6 +64,9 @@ export function registerIntentTodoIpc(ipcMain: IpcMain, getService: Getter<Inten
   ipcMain.handle(DESKTOP_INVOKE_CHANNELS.dispatchIntentTodo, (_event, params: unknown) =>
     getService().dispatchItem((params ?? {}) as Parameters<IntentTodoService['dispatchItem']>[0]),
   )
+  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.polishIntentTodoPrompt, (_event, params: unknown) =>
+    getService().polishDispatchPrompt((params ?? {}) as Parameters<IntentTodoService['polishDispatchPrompt']>[0]),
+  )
   ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getIntentTodoConfig, () => getService().getConfig())
   ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveIntentTodoConfig, (_event, patch: unknown) =>
     getService().saveConfig((patch ?? {}) as Parameters<IntentTodoService['saveConfig']>[0]),
@@ -74,6 +77,7 @@ export function registerIntentTodoIpc(ipcMain: IpcMain, getService: Getter<Inten
     DESKTOP_INVOKE_CHANNELS.refreshIntentTodo,
     DESKTOP_INVOKE_CHANNELS.decideIntentTodo,
     DESKTOP_INVOKE_CHANNELS.dispatchIntentTodo,
+    DESKTOP_INVOKE_CHANNELS.polishIntentTodoPrompt,
     DESKTOP_INVOKE_CHANNELS.getIntentTodoConfig,
     DESKTOP_INVOKE_CHANNELS.saveIntentTodoConfig,
   ])

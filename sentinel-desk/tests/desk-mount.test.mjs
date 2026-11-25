@@ -16,6 +16,7 @@ const INLINE_CHANNELS = [
   'refreshIntentTodo',
   'decideIntentTodo',
   'dispatchIntentTodo',
+  'polishIntentTodoPrompt',
   'getIntentTodoConfig',
   'saveIntentTodoConfig',
 ].map((key) => DESKTOP_INVOKE_CHANNELS[key])

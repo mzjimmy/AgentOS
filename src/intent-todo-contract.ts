@@ -203,6 +203,41 @@ export type IntentTodoDispatchResult =
     }
   | { ok: false; error: string; code?: 'broker_unavailable' | 'project_not_found' | 'item_not_found' | 'dispatch_failed' }
 
+export type IntentTodoPolishPromptResult =
+  | { ok: true; prompt: string; polished: boolean }
+  | { ok: false; error: string }
+
+/**
+ * Builds an immediate, non-destructive baseline engineering prompt from a todo's structured fields
+ * (zero raw journal text). Used to populate the inline dispatch editor instantaneously before
+ * optional cloud magic-wand polishing.
+ */
+export function buildIntentTodoDraftPrompt(item: IntentTodoItem, projectName?: string): string {
+  const actionKind = item.actionKind ?? (item.track === 'life' ? 'life' : 'implement')
+  const modeLine =
+    actionKind === 'investigate'
+      ? '核实与汇报现状（严禁擅自写代码）'
+      : actionKind === 'design'
+        ? '先调研并给出 ≤ 3 个精简方案与取舍（待确认后再动工）'
+        : actionKind === 'life'
+          ? '梳理清晰可执行步骤与确认点'
+          : '先核实落点一致，再按最小范围实施并验证'
+
+  const lines = [
+    `【任务目标】${item.title}`,
+    projectName ? `【目标项目】${projectName}` : '',
+    `【动作形态】${modeLine}`,
+    item.reason ? `【背景与依据】${item.reason}` : '',
+    item.targetSurface ? `【归属页面 / 表面】${item.targetSurface}` : '',
+    item.repoHint ? `【相关模块】${item.repoHint}` : '',
+    item.doneCriteria ? `【完成标准】${item.doneCriteria}` : '',
+    item.nonGoals && item.nonGoals.length > 0 ? `【明确不做】${item.nonGoals.join('；')}` : '',
+    item.antiPatterns.length > 0 ? `【反模式红线】${item.antiPatterns.join('；')}` : '',
+  ].filter(Boolean)
+
+  return lines.join('\n')
+}
+
 export type IntentTodoRefreshResult =
   | { ok: true; overview: IntentTodoOverview }
   | { ok: false; error: string; overview: IntentTodoOverview }

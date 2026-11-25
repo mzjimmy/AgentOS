@@ -55,6 +55,7 @@ import type {
   IntentTodoDecisionInput,
   IntentTodoDispatchResult,
   IntentTodoOverview,
+  IntentTodoPolishPromptResult,
   IntentTodoRefreshResult,
 } from '../src/intent-todo-contract'
 import type {
@@ -617,8 +618,17 @@ const desktopAdapter = {
   decideIntentTodo(itemId: string, decision: IntentTodoDecisionInput, selectedDate?: string) {
     return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.decideIntentTodo, itemId, decision, selectedDate) as Promise<IntentTodoActionResult>
   },
-  dispatchIntentTodo(params: { itemId: string; projectId?: string; sandboxedLife?: boolean; selectedDate?: string }) {
+  dispatchIntentTodo(params: {
+    itemId: string
+    projectId?: string
+    sandboxedLife?: boolean
+    selectedDate?: string
+    promptOverride?: string
+  }) {
     return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.dispatchIntentTodo, params) as Promise<IntentTodoDispatchResult>
+  },
+  polishIntentTodoPrompt(params: { itemId: string; projectName?: string; currentPrompt?: string }) {
+    return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.polishIntentTodoPrompt, params) as Promise<IntentTodoPolishPromptResult>
   },
   getIntentTodoConfig() {
     return ipcRenderer.invoke(DESKTOP_INVOKE_CHANNELS.getIntentTodoConfig) as Promise<IntentTodoConfig>

@@ -60,6 +60,7 @@ import type {
   IntentTodoDecisionInput,
   IntentTodoDispatchResult,
   IntentTodoOverview,
+  IntentTodoPolishPromptResult,
   IntentTodoRefreshResult,
 } from './intent-todo-contract'
 import type {
@@ -441,7 +442,13 @@ export type DesktopAPI = {
     projectId?: string
     sandboxedLife?: boolean
     selectedDate?: string
+    promptOverride?: string
   }) => Promise<IntentTodoDispatchResult>
+  polishIntentTodoPrompt?: (params: {
+    itemId: string
+    projectName?: string
+    currentPrompt?: string
+  }) => Promise<IntentTodoPolishPromptResult>
   getIntentTodoConfig?: () => Promise<IntentTodoConfig>
   saveIntentTodoConfig?: (patch: Partial<IntentTodoConfig>) => Promise<IntentTodoConfig>
   onIntentTodoChanged?: (listener: (event: IntentTodoChangedEvent) => void) => () => void
@@ -503,6 +510,7 @@ export type {
   IntentTodoDecisionInput,
   IntentTodoDispatchResult,
   IntentTodoOverview,
+  IntentTodoPolishPromptResult,
   IntentTodoRefreshResult,
 } from './intent-todo-contract'
 export type {
