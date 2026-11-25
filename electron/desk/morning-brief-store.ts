@@ -138,9 +138,18 @@ export class MorningBriefStore {
             : MORNING_BRIEF_DEFAULT_CONFIG.itemCount,
         scheduleHour:
           typeof raw.scheduleHour === 'number' && Number.isFinite(raw.scheduleHour)
-            ? Math.max(4, Math.min(12, Math.round(raw.scheduleHour)))
+            ? Math.max(4, Math.min(23, Math.round(raw.scheduleHour)))
             : MORNING_BRIEF_DEFAULT_CONFIG.scheduleHour,
-        autoRunEnabled: raw.autoRunEnabled === true,
+        scheduleMinute:
+          typeof raw.scheduleMinute === 'number' && Number.isFinite(raw.scheduleMinute)
+            ? Math.max(0, Math.min(59, Math.round(raw.scheduleMinute)))
+            : typeof raw.scheduleHour === 'number'
+              ? 0
+              : MORNING_BRIEF_DEFAULT_CONFIG.scheduleMinute,
+        autoRunEnabled:
+          typeof raw.autoRunEnabled === 'boolean'
+            ? raw.autoRunEnabled
+            : MORNING_BRIEF_DEFAULT_CONFIG.autoRunEnabled,
         speechRate:
           typeof raw.speechRate === 'number' && Number.isFinite(raw.speechRate)
             ? Math.max(0.7, Math.min(1.4, Number(raw.speechRate.toFixed(2))))
@@ -183,8 +192,12 @@ export class MorningBriefStore {
           : prev.itemCount,
       scheduleHour:
         typeof patch.scheduleHour === 'number' && Number.isFinite(patch.scheduleHour)
-          ? Math.max(4, Math.min(12, Math.round(patch.scheduleHour)))
+          ? Math.max(4, Math.min(23, Math.round(patch.scheduleHour)))
           : prev.scheduleHour,
+      scheduleMinute:
+        typeof patch.scheduleMinute === 'number' && Number.isFinite(patch.scheduleMinute)
+          ? Math.max(0, Math.min(59, Math.round(patch.scheduleMinute)))
+          : prev.scheduleMinute,
       speechRate:
         typeof patch.speechRate === 'number' && Number.isFinite(patch.speechRate)
           ? Math.max(0.7, Math.min(1.4, Number(patch.speechRate.toFixed(2))))

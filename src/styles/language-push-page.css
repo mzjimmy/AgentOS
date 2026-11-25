@@ -1,17 +1,10 @@
-/* SentinelDesk Language Push — card, toast, and settings-row styles. Page chrome lives in DeskDatePageShell. */
+/* SentinelDesk Language Push — Option 3 grouped index + accordion rows.
+   Page chrome lives in DeskDatePageShell; only list/row/drawer/player styles here. */
 
-.lp-page .lp-settings-modal {
-  width: min(640px, 100%);
-}
+/* ---------- shared bits ---------- */
 
-.lp-page .lp-settings-modal:focus {
-  outline: none;
-}
-
-.desk-shell-btn.lp-btn-playing {
-  background: var(--j-dai-soft);
-  border-color: var(--j-dai);
-  color: var(--j-dai);
+.lp-audio-bar {
+  margin: 0 0 18px;
 }
 
 .lp-banner {
@@ -34,6 +27,89 @@
   background: var(--j-cinnabar-soft);
   color: var(--j-cinnabar);
 }
+
+.lp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-surface);
+  color: var(--j-ink-1);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.lp-btn:hover:not(:disabled) {
+  background: var(--j-sunken);
+}
+
+.lp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.lp-btn-primary {
+  background: var(--j-dai);
+  border-color: var(--j-dai);
+  color: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .lp-btn-primary,
+  .lp-toast-error {
+    color: var(--j-desk);
+  }
+}
+
+[data-theme="dark"] .lp-btn-primary,
+[data-theme="dark"] .lp-toast-error {
+  color: var(--j-desk);
+}
+
+.lp-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+  background: var(--j-dai);
+}
+
+.lp-mini-btn,
+.lp-anchor-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--j-ink-3);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lp-mini-btn:hover,
+.lp-anchor-btn:hover {
+  background: var(--j-surface);
+  color: var(--j-dai);
+}
+
+.lp-meta {
+  font-size: 11.5px;
+  color: var(--j-ink-3);
+  white-space: nowrap;
+}
+
+/* IPA / kana readings need a font with full IPA Unicode coverage —
+   never a code/mono font (missing glyphs render as garbled boxes). */
+.lp-row-reading,
+.lp-drawer-reading {
+  font-family: "Lucida Grande", "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", var(--j-font-sans);
+}
+
+/* ---------- settings modal rows ---------- */
 
 .lp-setting-row {
   display: flex;
@@ -101,53 +177,97 @@
   box-shadow: 0 1px 2px rgba(35, 34, 31, 0.05);
 }
 
-.lp-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: 16px;
-  align-items: start;
+/* ---------- grouped index sections ---------- */
+
+.lp-list-top {
+  height: 0;
 }
 
-.lp-card {
-  background: var(--j-surface);
-  border: 1px solid var(--j-line);
-  border-radius: 14px;
-  padding: 18px 20px 16px;
-  box-shadow: var(--j-shadow-card);
+.lp-group {
+  margin-bottom: 20px;
+}
+
+.lp-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--j-line);
+  margin-bottom: 4px;
+}
+
+.lp-group-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--j-ink-2);
+}
+
+.lp-group-count {
+  font-size: 11.5px;
+  color: var(--j-ink-3);
+}
+
+.lp-group-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  transition: border-color 140ms ease, transform 140ms ease;
 }
 
-.lp-card:hover {
-  border-color: var(--j-line-strong);
+/* ---------- accordion row ---------- */
+
+.lp-row {
+  border-bottom: 1px solid var(--j-line);
 }
 
-.lp-card-unfamiliar {
-  border-color: color-mix(in srgb, var(--j-amber) 45%, var(--j-line));
+.lp-row-mastered {
+  opacity: 0.72;
 }
 
-.lp-card-mastered {
-  opacity: 0.84;
-}
-
-.lp-card-playing {
-  border-color: var(--j-dai);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--j-dai) 28%, transparent), var(--j-shadow-card);
-}
-
-.lp-btn-playing {
-  background: var(--j-dai-soft);
-  border-color: var(--j-dai);
-  color: var(--j-dai);
-}
-
-.lp-card-top {
-  display: flex;
+.lp-row-bar {
+  display: grid;
+  grid-template-columns: 30px auto minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 1.3fr) auto;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 10px;
+  height: 52px;
+  padding: 0 6px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 120ms ease;
+}
+
+.lp-row-bar:hover {
+  background: var(--j-sunken);
+}
+
+.lp-row-open .lp-row-bar {
+  background: var(--j-sunken);
+}
+
+.lp-row-active .lp-row-bar {
+  box-shadow: inset 2.5px 0 0 var(--j-dai);
+}
+
+.lp-row-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--j-line-strong);
+  background: var(--j-canvas);
+  color: var(--j-ink-2);
+  cursor: pointer;
+  padding: 0;
+}
+
+.lp-row-play-btn:hover,
+.lp-row-play-btn-active {
+  border-color: var(--j-dai);
+  background: var(--j-dai-soft);
+  color: var(--j-dai);
 }
 
 .lp-chip {
@@ -156,6 +276,7 @@
   padding: 2px 8px;
   border-radius: 6px;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .lp-chip-lang-en {
@@ -168,65 +289,129 @@
   color: var(--j-amber);
 }
 
-.lp-chip-kind-vocab {
-  background: var(--j-sunken);
-  color: var(--j-ink-2);
+.lp-row-surface {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--j-ink-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 140ms ease;
 }
 
-.lp-chip-kind-grammar {
-  background: var(--j-pine-soft);
-  color: var(--j-pine);
-}
-
-.lp-chip-level {
-  background: transparent;
-  border: 1px solid var(--j-line-strong);
-  color: var(--j-ink-3);
-}
-
-.lp-chip-expansion {
-  background: color-mix(in srgb, var(--j-dai) 12%, transparent);
+.lp-row-speaking {
   color: var(--j-dai);
 }
 
-.lp-chip-freq {
-  background: var(--j-sunken);
+.lp-row-reading {
+  font-size: 12.5px;
+  color: var(--j-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lp-row-meaning {
+  font-size: 12.5px;
   color: var(--j-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.lp-fam-mark {
-  font-size: 11px;
-  font-weight: 600;
+.lp-row-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
 }
 
-.lp-fam-mark-unfamiliar {
+.lp-rate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--j-ink-3);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lp-rate-btn:hover:not(:disabled) {
+  background: var(--j-sunken);
+  color: var(--j-ink-1);
+}
+
+.lp-rate-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.lp-rate-unfamiliar.lp-rate-selected {
+  background: var(--j-amber-soft);
   color: var(--j-amber);
 }
 
-.lp-fam-mark-fuzzy {
+.lp-rate-fuzzy.lp-rate-selected {
+  background: var(--j-dai-soft);
   color: var(--j-dai);
 }
 
-.lp-meta {
-  margin-left: auto;
-  font-size: 11.5px;
-  color: var(--j-ink-3);
+.lp-rate-selected {
+  font-weight: 600;
 }
 
-.lp-hero {
+/* ---------- accordion drawer ---------- */
+
+.lp-drawer-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms ease;
+}
+
+.lp-drawer-wrap.lp-drawer-open {
+  grid-template-rows: 1fr;
+}
+
+.lp-drawer-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.lp-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 8px 16px 42px;
+}
+
+.lp-drawer-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
-.lp-hero-copy {
-  min-width: 0;
+.lp-drawer-term-box {
+  padding: 6px 10px;
+  margin-left: -10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  transition: border-color 140ms ease, background 140ms ease;
 }
 
-.lp-surface {
+.lp-drawer-term-speaking {
+  border-color: var(--j-dai);
+  background: var(--j-dai-soft);
+}
+
+.lp-drawer-surface {
   margin: 0;
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 700;
   line-height: 1.25;
   letter-spacing: -0.015em;
@@ -234,44 +419,20 @@
   word-break: break-word;
 }
 
-.lp-reading {
-  margin: 4px 0 0;
-  font-family: var(--j-font-mono);
-  font-size: 12.5px;
+.lp-drawer-reading {
+  margin: 3px 0 0;
+  font-size: 13px;
   color: var(--j-ink-3);
 }
 
-.lp-speak-btn {
-  flex-shrink: 0;
-  display: inline-flex;
+.lp-drawer-side {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 11px;
-  border-radius: 999px;
-  border: 1px solid var(--j-line-strong);
-  background: var(--j-canvas);
-  color: var(--j-ink-2);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
-.lp-speak-btn:hover,
-.lp-speak-btn-active {
-  border-color: var(--j-dai);
-  background: var(--j-dai-soft);
-  color: var(--j-dai);
-}
-
-.lp-meaning {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 550;
-  line-height: 1.45;
-  color: var(--j-ink-1);
-}
-
-.lp-note {
+.lp-drawer-note {
   padding: 9px 12px;
   border-radius: 9px;
   background: var(--j-pine-soft);
@@ -293,16 +454,23 @@
   color: var(--j-ink-1);
 }
 
-.lp-example-box {
+.lp-drawer-ex-card {
   padding: 11px 13px;
   border-radius: 10px;
+  border: 1px solid transparent;
   background: var(--j-sunken);
   display: flex;
   flex-direction: column;
   gap: 6px;
+  transition: border-color 140ms ease, background 140ms ease;
 }
 
-.lp-example-head {
+.lp-drawer-ex-speaking {
+  border-color: var(--j-dai);
+  background: color-mix(in srgb, var(--j-dai) 8%, var(--j-sunken));
+}
+
+.lp-drawer-ex-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -315,12 +483,6 @@
   color: var(--j-ink-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-.lp-example-tools {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .lp-example-sentence {
@@ -337,116 +499,7 @@
   color: var(--j-ink-3);
 }
 
-.lp-mini-btn,
-.lp-anchor-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: var(--j-ink-3);
-  font-size: 11.5px;
-  cursor: pointer;
-}
-
-.lp-mini-btn:hover,
-.lp-mini-btn-active,
-.lp-anchor-btn:hover {
-  background: var(--j-surface);
-  color: var(--j-dai);
-}
-
-.lp-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 4px;
-  border-top: 1px solid var(--j-line);
-  flex-wrap: wrap;
-}
-
-.lp-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--j-line-strong);
-  background: var(--j-surface);
-  color: var(--j-ink-1);
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-
-.lp-btn:hover:not(:disabled) {
-  background: var(--j-sunken);
-}
-
-.lp-btn:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.lp-btn-primary {
-  background: var(--j-dai);
-  border-color: var(--j-dai);
-  color: #fff;
-}
-
-.lp-btn-primary:hover:not(:disabled) {
-  filter: brightness(1.06);
-  background: var(--j-dai);
-}
-
-.lp-actions-rating {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.lp-btn-rating {
-  justify-content: center;
-  padding: 7px 10px;
-}
-
-.lp-btn-unfamiliar {
-  background: var(--j-amber-soft);
-  border-color: color-mix(in srgb, var(--j-amber) 35%, transparent);
-  color: var(--j-amber);
-}
-
-.lp-btn-unfamiliar:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--j-amber) 20%, var(--j-surface));
-}
-
-.lp-btn-fuzzy {
-  background: var(--j-dai-soft);
-  border-color: color-mix(in srgb, var(--j-dai) 35%, transparent);
-  color: var(--j-dai);
-}
-
-.lp-btn-fuzzy:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--j-dai) 18%, var(--j-surface));
-}
-
-.lp-btn-familiar {
-  background: var(--j-pine-soft);
-  border-color: color-mix(in srgb, var(--j-pine) 35%, transparent);
-  color: var(--j-pine);
-}
-
-.lp-btn-familiar:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--j-pine) 18%, var(--j-surface));
-}
-
-.lp-btn-rating-selected {
-  box-shadow: inset 0 0 0 1.5px currentColor;
-  font-weight: 600;
-}
+/* ---------- empty state & toast ---------- */
 
 .lp-empty {
   max-width: 460px;

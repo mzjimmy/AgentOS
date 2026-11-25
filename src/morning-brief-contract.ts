@@ -109,6 +109,7 @@ export type MorningBriefConfig = {
   issueTag: string
   itemCount: number
   scheduleHour: number
+  scheduleMinute: number
   autoRunEnabled: boolean
   speechRate: number
   ttsVoiceZh: string
@@ -121,8 +122,9 @@ export const MORNING_BRIEF_DEFAULT_CONFIG: MorningBriefConfig = {
   authorName: 'SentinelDesk',
   issueTag: '#每日AI早报',
   itemCount: 10,
-  scheduleHour: 7,
-  autoRunEnabled: false,
+  scheduleHour: 4,
+  scheduleMinute: 30,
+  autoRunEnabled: true,
   speechRate: 1.02,
   ttsVoiceZh: MORNING_BRIEF_DEFAULT_VOICE_ZH,
   ttsModel: MORNING_BRIEF_DEFAULT_TTS_MODEL,
@@ -237,7 +239,7 @@ export type MorningBriefSpeakResult =
     }
 
 export type MorningBriefChangedEvent = {
-  reason: 'generated' | 'swapped' | 'config' | 'audio'
+  reason: 'running' | 'generated' | 'error' | 'swapped' | 'config' | 'audio'
   date: string
   at: string
 }

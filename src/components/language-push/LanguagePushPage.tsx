@@ -1,12 +1,14 @@
 /**
- * SentinelDesk Language Push (外语学习推送板块).
+ * SentinelDesk Language Push (外语学习推送板块) — Option 3:
+ * grouped dictionary index (核心词汇 / 实用语法与句型) + accordion rows +
+ * auto-expand loop playback driven by the pure LanguagePushPlayerController.
  *
  * Foreground shows only threshold-filtered vocab and grammar cards.
  * Translated corpus stays on disk. Date chrome comes from DeskDatePageShell.
  */
 
 import '../../styles/language-push-page.css'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   CLAUDE_AGENT_MODEL_CATALOG_CHANGED_EVENT,
   CLAUDE_AGENT_SETTINGS_CHANGED_EVENT,
@@ -18,6 +20,7 @@ import { buildModelPickRows, modelPickFromRow, modelPickKey } from '../../model-
 import {
   LANGUAGE_PUSH_DEFAULT_CUTOVER_HOUR,
   LANGUAGE_PUSH_VOICE_PRESETS,
+  type LanguagePushCard,
   type LanguagePushConfig,
   type LanguagePushDecisionAction,
   type LanguagePushEnLevel,
@@ -26,15 +29,39 @@ import {
   type LanguagePushOverview,
   type LanguagePushPronunciationHint,
 } from '../../language-push-contract'
+import { DeskAudioBar, DeskAudioStickyStrip, useDeskAudioSticky } from '../desk/DeskAudioBar'
+import { computeDeskAudioProgressPct, formatDeskAudioClock } from '../desk/desk-audio-bar-contract'
 import { DeskDatePageShell, DeskModalDialog } from '../desk/DeskDatePageShell'
 import { useShanghaiToday } from '../desk/useShanghaiToday'
 import { LanguageCard } from './LanguageCard'
+import { languagePushPlayer } from './language-push-player'
 import {
   playLanguagePushSpeech,
   prefetchLanguagePushSpeech,
   sleepCancellable,
   stopAllSpeech,
 } from './speech-helper'
+
+let lpMediaHooksConfigured = false
+
+function ensureLanguagePushMediaHooks() {
+  if (lpMediaHooksConfigured) return
+  lpMediaHooksConfigured = true
+  languagePushPlayer.updateHooks({
+    speak: async (params) => {
+      const result = await playLanguagePushSpeech(params)
+      return {
+        outcome: result.outcome === 'ended' ? 'ok' : result.outcome,
+        provider: result.provider,
+        fallbackReason: result.fallbackReason,
+      }
+    },
+    prefetch: (params) => prefetchLanguagePushSpeech(params),
+    sleep: (ms, isCancelled) => sleepCancellable(ms, isCancelled),
+    stopSpeech: () => stopAllSpeech(),
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+  })
+}
 
 export type LanguagePushPageProps = {
   hidden?: boolean
@@ -62,21 +89,21 @@ export function LanguagePushPage({
   const [tab, setTab] = useState<DeckTab>('today')
   const [langFilter, setLangFilter] = useState<LangFilter>('all')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [speakingKey, setSpeakingKey] = useState<string | null>(null)
-  const [playlistState, setPlaylistState] = useState<{
-    activeCardId: string
-    index: number
-    total: number
-  } | null>(null)
   const [claudeSettings, setClaudeSettings] = useState<ClaudeAgentSettingsSnapshot | null>(null)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; message: string } | null>(null)
   const noticeTimerRef = useRef(0)
-  const playbackGenRef = useRef(0)
   const cardElMapRef = useRef<Map<string, HTMLElement>>(new Map())
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const audioBarRef = useRef<HTMLDivElement | null>(null)
+  const listTopRef = useRef<HTMLDivElement | null>(null)
   const loadSeqRef = useRef(0)
   const selectedDateRef = useRef(selectedDate)
   const datePinnedRef = useRef(false)
   const settingsTriggerRef = useRef<HTMLButtonElement>(null)
+  const playerHooksRef = useRef<{
+    showNotice: (tone: 'ok' | 'error', message: string) => void
+    t: ReturnType<typeof useI18n>['t']
+  } | null>(null)
   selectedDateRef.current = selectedDate
 
   const todayDate =
@@ -160,12 +187,57 @@ export function LanguagePushPage({
     [clearAwaiting, showNotice, t],
   )
 
+  playerHooksRef.current = { showNotice, t }
+  ensureLanguagePushMediaHooks()
+  const player = languagePushPlayer
+  const playerSnap = useSyncExternalStore(player.subscribe, player.getSnapshot)
+
+  useEffect(() => {
+    player.updateHooks({
+      onCardEnter: (card) => {
+        cardElMapRef.current.get(card.id)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      },
+      onResetToTop: () => {
+        listTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      },
+      onFallbackNotice: () => {
+        const hooks = playerHooksRef.current
+        if (hooks) hooks.showNotice('ok', hooks.t('languagePush.speechFallbackNotice'))
+      },
+      onComplete: (count) => {
+        const hooks = playerHooksRef.current
+        if (hooks) hooks.showNotice('ok', hooks.t('languagePush.playAllDone', { count }))
+      },
+      onError: (message) => {
+        const hooks = playerHooksRef.current
+        if (!hooks) return
+        hooks.showNotice('error', message === 'speech_failed' ? hooks.t('languagePush.speechFailed') : message)
+      },
+    })
+    return () => {
+      player.updateHooks({
+        onCardEnter: undefined,
+        onResetToTop: undefined,
+        onFallbackNotice: undefined,
+        onComplete: undefined,
+        onError: undefined,
+      })
+    }
+  }, [player])
+
+  useEffect(() => {
+    if (overview?.config.speechRate) {
+      player.syncDefaultSpeed(overview.config.speechRate)
+    }
+  }, [overview?.config.speechRate, player])
+
   const cancelPlayback = useCallback(() => {
-    playbackGenRef.current += 1
-    stopAllSpeech()
-    setSpeakingKey(null)
-    setPlaylistState(null)
-  }, [])
+    player.stop()
+  }, [player])
+
+  const handleToggleLoop = useCallback(() => {
+    player.toggleLoop()
+  }, [player])
 
   const closeSettings = useCallback(() => {
     setSettingsOpen(false)
@@ -178,8 +250,6 @@ export function LanguagePushPage({
     })
     return () => {
       off?.()
-      playbackGenRef.current += 1
-      stopAllSpeech()
       window.clearTimeout(noticeTimerRef.current)
     }
   }, [loadOverview])
@@ -194,10 +264,6 @@ export function LanguagePushPage({
     setSelectedDate(nextToday)
     void loadOverview(nextToday)
   }, [overview?.todayDate, liveToday, loadOverview, cancelPlayback])
-
-  useEffect(() => {
-    if (hidden) cancelPlayback()
-  }, [hidden, cancelPlayback])
 
   const markerByDate = useMemo(() => {
     const map = new Map<string, NonNullable<LanguagePushOverview['calendarMarkers']>[number]>()
@@ -233,11 +299,23 @@ export function LanguagePushPage({
     return base.filter((card) => card.lang === langFilter)
   }, [shown, tab, langFilter])
 
-  const playQueue = useMemo(() => {
-    if (!shown) return []
-    if (tab === 'today') return visibleCards
-    return shown.todayCards.filter((card) => langFilter === 'all' || card.lang === langFilter)
-  }, [shown, tab, visibleCards, langFilter])
+  const vocabCards = useMemo(() => visibleCards.filter((card) => card.kind === 'vocab'), [visibleCards])
+  const grammarCards = useMemo(
+    () => visibleCards.filter((card) => card.kind === 'grammar'),
+    [visibleCards],
+  )
+  // Visual order (vocab group, then grammar group) is the authoritative playlist.
+  const playQueue = useMemo(
+    () => [...vocabCards, ...grammarCards],
+    [vocabCards, grammarCards],
+  )
+
+  const queueScopeKey = `${selectedDate}:${tab}:${langFilter}`
+
+  useEffect(() => {
+    if (!shown) return
+    player.syncQueue(playQueue, queueScopeKey)
+  }, [player, playQueue, queueScopeKey, shown])
 
   const heroMeta = useMemo(() => {
     if (!shown) return null
@@ -343,141 +421,48 @@ export function LanguagePushPage({
     [overview?.config],
   )
 
-  const handleSpeak = async (
-    key: string,
+  const speechRate = overview?.config.speechRate ?? 0.95
+  const isAudioActive = Boolean(playerSnap.activeCardId)
+
+  const showStickyStrip = useDeskAudioSticky({
+    scrollRef,
+    anchorRef: audioBarRef,
+    active: isAudioActive,
+    rebindKey: `${selectedDate}:${tab}:${langFilter}:${playQueue.length}`,
+  })
+
+  const handlePlayAll = () => {
+    if (isAudioActive) {
+      player.stop()
+      return
+    }
+    if (playQueue.length === 0) {
+      showNotice('ok', t('languagePush.playAllEmpty'))
+      return
+    }
+    void player.playQueue(playQueue, { speed: speechRate, queueScopeKey, resolveVoiceId })
+  }
+
+  const handlePlaySingle = (card: LanguagePushCard) => {
+    if (playerSnap.activeCardId === card.id) {
+      player.stop({ keepOpen: true })
+      return
+    }
+    void player.playSingle(card, { speed: speechRate, resolveVoiceId })
+  }
+
+  const handlePlayFromHere = (cardId: string) => {
+    const index = playQueue.findIndex((card) => card.id === cardId)
+    if (index < 0) return
+    void player.playFromIndex(playQueue, index, { speed: speechRate, queueScopeKey, resolveVoiceId })
+  }
+
+  const handlePreview = (
     text: string,
     lang: LanguagePushLang,
     pronunciations?: LanguagePushPronunciationHint[],
   ) => {
-    if (speakingKey === key && !playlistState) {
-      cancelPlayback()
-      return
-    }
-    cancelPlayback()
-    const gen = playbackGenRef.current
-    const isCancelled = () => playbackGenRef.current !== gen
-    setSpeakingKey(key)
-
-    const result = await playLanguagePushSpeech({
-      text,
-      lang,
-      speed: overview?.config.speechRate ?? 0.95,
-      voiceId: resolveVoiceId(lang),
-      pronunciations,
-      isCancelled,
-    })
-
-    if (!isCancelled()) {
-      setSpeakingKey((current) => (current === key ? null : current))
-      if (result.outcome === 'error') {
-        showNotice('error', result.fallbackReason || t('languagePush.speechFailed'))
-      } else if (result.provider === 'offline' && result.fallbackReason) {
-        showNotice('ok', t('languagePush.speechFallbackNotice'))
-      }
-    }
-  }
-
-  const handlePlayAllToday = async () => {
-    if (playlistState) {
-      cancelPlayback()
-      return
-    }
-    const queue = playQueue
-    if (queue.length === 0) {
-      showNotice('ok', t('languagePush.playAllEmpty'))
-      return
-    }
-
-    cancelPlayback()
-    const gen = playbackGenRef.current
-    const isCancelled = () => playbackGenRef.current !== gen
-    const rate = overview?.config.speechRate ?? 0.95
-    let fallbackNotified = false
-
-    for (let i = 0; i < queue.length; i += 1) {
-      if (isCancelled()) break
-      const card = queue[i]
-      const hints =
-        card.lang === 'ja'
-          ? [
-              ...(card.example.pronunciations ?? []),
-              ...(card.reading ? [{ surface: card.surface, reading: card.reading }] : []),
-            ]
-          : undefined
-      const voiceId = resolveVoiceId(card.lang)
-
-      setPlaylistState({ activeCardId: card.id, index: i + 1, total: queue.length })
-      cardElMapRef.current.get(card.id)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-
-      const nextCard = queue[i + 1]
-      if (nextCard) {
-        const nextHints =
-          nextCard.lang === 'ja'
-            ? [
-                ...(nextCard.example.pronunciations ?? []),
-                ...(nextCard.reading ? [{ surface: nextCard.surface, reading: nextCard.reading }] : []),
-              ]
-            : undefined
-        const nextVoice = resolveVoiceId(nextCard.lang)
-        prefetchLanguagePushSpeech({
-          text: nextCard.surface,
-          lang: nextCard.lang,
-          speed: rate,
-          voiceId: nextVoice,
-          pronunciations: nextHints,
-        })
-        if (nextCard.example.sentence) {
-          prefetchLanguagePushSpeech({
-            text: nextCard.example.sentence,
-            lang: nextCard.lang,
-            speed: rate,
-            voiceId: nextVoice,
-            pronunciations: nextHints,
-          })
-        }
-      }
-
-      setSpeakingKey(`${card.id}:term`)
-      const termRes = await playLanguagePushSpeech({
-        text: card.surface,
-        lang: card.lang,
-        speed: rate,
-        voiceId,
-        pronunciations: hints,
-        isCancelled,
-      })
-      if (isCancelled()) break
-      if (termRes.provider === 'offline' && !fallbackNotified && termRes.fallbackReason) {
-        fallbackNotified = true
-        showNotice('ok', t('languagePush.speechFallbackNotice'))
-      }
-
-      if (card.example.sentence) {
-        const keepGoing = await sleepCancellable(420, isCancelled)
-        if (!keepGoing) break
-        setSpeakingKey(`${card.id}:example`)
-        await playLanguagePushSpeech({
-          text: card.example.sentence,
-          lang: card.lang,
-          speed: rate,
-          voiceId,
-          pronunciations: hints,
-          isCancelled,
-        })
-        if (isCancelled()) break
-      }
-
-      if (i < queue.length - 1) {
-        const keepGoing = await sleepCancellable(720, isCancelled)
-        if (!keepGoing) break
-      }
-    }
-
-    if (!isCancelled()) {
-      setSpeakingKey(null)
-      setPlaylistState(null)
-      showNotice('ok', t('languagePush.playAllDone', { count: queue.length }))
-    }
+    void player.preview({ text, lang, speed: speechRate, voiceId: resolveVoiceId(lang), pronunciations })
   }
 
   const cfg = overview?.config
@@ -493,7 +478,7 @@ export function LanguagePushPage({
   }
 
   const updateDailyLimit = (limit: number) => {
-    const grammar = limit <= 6 ? 1 : limit >= 12 ? 3 : 2
+    const grammar = limit <= 6 ? 1 : limit >= 24 ? 6 : limit >= 16 ? 4 : limit >= 12 ? 3 : 2
     const vocab = Math.max(1, limit - grammar)
     void handleSaveConfig({ dailyLimit: limit, dailyVocabLimit: vocab, dailyGrammarLimit: grammar })
   }
@@ -504,6 +489,55 @@ export function LanguagePushPage({
     : isViewingToday
       ? t('languagePush.runNow')
       : t('languagePush.extractDay')
+
+  const cardGroups = [
+    { kind: 'vocab' as const, title: t('languagePush.groupVocab'), cards: vocabCards },
+    { kind: 'grammar' as const, title: t('languagePush.groupGrammar'), cards: grammarCards },
+  ]
+
+  const audioBarLabels = useMemo(
+    () => ({
+      play: t('languagePush.playAll'),
+      pause: t('languagePush.stopPlayback'),
+      prev: t('languagePush.prevCard'),
+      next: t('languagePush.nextCard'),
+      speed: t('languagePush.settingSpeechRate'),
+      loopOn: t('languagePush.loop'),
+      loopOff: t('languagePush.loop'),
+    }),
+    [t],
+  )
+
+  const audioBarProps = {
+    title:
+      isAudioActive && playerSnap.activeSurface
+        ? playerSnap.activeSurface
+        : tab === 'today' && isViewingToday
+          ? t('languagePush.playAllToday')
+          : t('languagePush.playAll'),
+    phaseLabel: isAudioActive
+      ? playerSnap.phase === 'term'
+        ? t('languagePush.nowPlayingTerm')
+        : t('languagePush.nowPlayingExample')
+      : null,
+    subtitle: isAudioActive
+      ? `${formatDeskAudioClock(playerSnap.elapsedSec)} · ${Math.max(1, playerSnap.index + 1)} / ${Math.max(1, playerSnap.total)}`
+      : `${formatDeskAudioClock(0)} · ${t('languagePush.groupCount', { count: playQueue.length })}`,
+    isPlaying: isAudioActive,
+    disabled: !isAudioActive && playQueue.length === 0,
+    playbackRate: playerSnap.playbackRate,
+    loop: playerSnap.loop,
+    canPrev: playerSnap.isPlaylist && (playerSnap.loop || playerSnap.index > 0),
+    canNext: playerSnap.isPlaylist && (playerSnap.loop || playerSnap.index < playerSnap.total - 1),
+    onTogglePlay: handlePlayAll,
+    onCycleSpeed: () => {
+      player.cycleSpeed()
+    },
+    onToggleLoop: handleToggleLoop,
+    onPrev: () => player.stepPrev(),
+    onNext: () => player.stepNext(),
+    labels: audioBarLabels,
+  }
 
   return (
     <DeskDatePageShell
@@ -516,6 +550,16 @@ export function LanguagePushPage({
       calendarMarkers={calendarMarkers}
       getDayState={getDayState}
       onSelectDate={handleSelectDate}
+      scrollRef={scrollRef}
+      stickyOverlay={
+        <DeskAudioStickyStrip
+          visible={showStickyStrip}
+          progressPct={computeDeskAudioProgressPct(playerSnap.index, playerSnap.total)}
+          maxWidthPx={980}
+          testId="language-push-sticky-strip"
+          {...audioBarProps}
+        />
+      }
       topbarRightSlot={
         <button
           type="button"
@@ -528,36 +572,18 @@ export function LanguagePushPage({
       }
       heroMeta={heroMeta}
       heroRight={
-        <>
-          <button
-            type="button"
-            className={playlistState ? 'desk-shell-btn lp-btn-playing' : 'desk-shell-btn'}
-            disabled={!playlistState && playQueue.length === 0}
-            onClick={() => void handlePlayAllToday()}
-          >
-            <IconInline name={playlistState ? 'stop' : 'play'} />
-            <span>
-              {playlistState
-                ? t('languagePush.stopPlayAll', {
-                    current: playlistState.index,
-                    total: playlistState.total,
-                  })
-                : t('languagePush.playAll')}
-            </span>
-          </button>
-          <button
-            type="button"
-            ref={settingsTriggerRef}
-            className="desk-shell-btn desk-shell-btn--icon"
-            aria-label={t('languagePush.settings')}
-            aria-haspopup="dialog"
-            aria-expanded={settingsOpen}
-            disabled={!cfg}
-            onClick={() => setSettingsOpen(true)}
-          >
-            <IconInline name="settings" />
-          </button>
-        </>
+        <button
+          type="button"
+          ref={settingsTriggerRef}
+          className="desk-shell-btn desk-shell-btn--icon"
+          aria-label={t('languagePush.settings')}
+          aria-haspopup="dialog"
+          aria-expanded={settingsOpen}
+          disabled={!cfg}
+          onClick={() => setSettingsOpen(true)}
+        >
+          <IconInline name="settings" />
+        </button>
       }
       subbar={
         <>
@@ -567,7 +593,12 @@ export function LanguagePushPage({
               role="tab"
               aria-selected={tab === 'today'}
               className={tab === 'today' ? 'desk-shell-seg-btn is-active' : 'desk-shell-seg-btn'}
-              onClick={() => setTab('today')}
+              onClick={() => {
+                if (tab !== 'today') {
+                  cancelPlayback()
+                  setTab('today')
+                }
+              }}
             >
               {todayTabLabel} ({counts?.todayTotal ?? 0})
             </button>
@@ -576,7 +607,12 @@ export function LanguagePushPage({
               role="tab"
               aria-selected={tab === 'backlog'}
               className={tab === 'backlog' ? 'desk-shell-seg-btn is-active' : 'desk-shell-seg-btn'}
-              onClick={() => setTab('backlog')}
+              onClick={() => {
+                if (tab !== 'backlog') {
+                  cancelPlayback()
+                  setTab('backlog')
+                }
+              }}
             >
               {t('languagePush.tabBacklog')} ({counts?.backlogTotal ?? 0}/{counts?.backlogCap ?? cfg?.backlogCap ?? 40})
             </button>
@@ -585,7 +621,12 @@ export function LanguagePushPage({
               role="tab"
               aria-selected={tab === 'mastered'}
               className={tab === 'mastered' ? 'desk-shell-seg-btn is-active' : 'desk-shell-seg-btn'}
-              onClick={() => setTab('mastered')}
+              onClick={() => {
+                if (tab !== 'mastered') {
+                  cancelPlayback()
+                  setTab('mastered')
+                }
+              }}
             >
               {t('languagePush.tabMastered')} ({counts?.masteredTotal ?? 0})
             </button>
@@ -597,7 +638,12 @@ export function LanguagePushPage({
                 type="button"
                 className={langFilter === filter ? 'desk-shell-seg-btn is-active' : 'desk-shell-seg-btn'}
                 aria-pressed={langFilter === filter}
-                onClick={() => setLangFilter(filter)}
+                onClick={() => {
+                  if (langFilter !== filter) {
+                    cancelPlayback()
+                    setLangFilter(filter)
+                  }
+                }}
               >
                 {filter === 'all' ? t('languagePush.filterAll') : filter === 'en' ? 'EN' : 'JA'}
               </button>
@@ -637,7 +683,7 @@ export function LanguagePushPage({
                   <div className="lp-setting-row">
                     <span className="lp-setting-label">{t('languagePush.settingDailyLimit')}</span>
                     <div className="lp-setting-pills">
-                      {[6, 8, 10, 12].map((count) => (
+                      {[6, 8, 12, 16, 24].map((count) => (
                         <button
                           key={count}
                           type="button"
@@ -684,7 +730,11 @@ export function LanguagePushPage({
                         <span>{t('languagePush.settingSpeechRate')}</span>
                         <select
                           value={String(cfg.speechRate)}
-                          onChange={(event) => void handleSaveConfig({ speechRate: Number(event.target.value) })}
+                          onChange={(event) => {
+                            const rate = Number(event.target.value)
+                            player.setPlaybackRate(rate)
+                            void handleSaveConfig({ speechRate: rate })
+                          }}
                         >
                           <option value="0.8">0.8x</option>
                           <option value="0.95">0.95x</option>
@@ -840,6 +890,18 @@ export function LanguagePushPage({
         </div>
       ) : null}
 
+      {!deckPending && (playQueue.length > 0 || isAudioActive) ? (
+        <DeskAudioBar
+          barRef={audioBarRef}
+          variant="card"
+          className="lp-audio-bar"
+          testId="language-push-player"
+          {...audioBarProps}
+        />
+      ) : null}
+
+      <div ref={listTopRef} className="lp-list-top" />
+
       {deckPending ? (
         <div className="lp-empty">
           <p className="lp-empty-body">{t('languagePush.loading')}</p>
@@ -864,24 +926,40 @@ export function LanguagePushPage({
           ) : null}
         </div>
       ) : (
-        <div className="lp-grid">
-          {visibleCards.map((card) => (
-            <LanguageCard
-              key={card.id}
-              card={card}
-              speakingKey={speakingKey}
-              isPlaylistActive={playlistState?.activeCardId === card.id}
-              busy={busyCardId === card.id}
-              cardRef={(element) => {
-                if (element) cardElMapRef.current.set(card.id, element)
-                else cardElMapRef.current.delete(card.id)
-              }}
-              onSpeak={(key, text, lang, hints) => void handleSpeak(key, text, lang, hints)}
-              onDecide={(id, action) => void handleDecide(id, action)}
-              onNavigateToJournalAnchor={onNavigateToJournalAnchor}
-            />
-          ))}
-        </div>
+        cardGroups.map((group) =>
+          group.cards.length === 0 ? null : (
+            <section key={group.kind} className="lp-group">
+              <header className="lp-group-head">
+                <h2 className="lp-group-title">{group.title}</h2>
+                <span className="lp-group-count">
+                  {t('languagePush.groupCount', { count: group.cards.length })}
+                </span>
+              </header>
+              <div className="lp-group-list">
+                {group.cards.map((card) => (
+                  <LanguageCard
+                    key={card.id}
+                    card={card}
+                    isOpen={playerSnap.openCardId === card.id}
+                    isActive={playerSnap.activeCardId === card.id}
+                    activePhase={playerSnap.activeCardId === card.id ? playerSnap.phase : null}
+                    busy={busyCardId === card.id}
+                    cardRef={(element) => {
+                      if (element) cardElMapRef.current.set(card.id, element)
+                      else cardElMapRef.current.delete(card.id)
+                    }}
+                    onToggleOpen={(cardId) => player.toggleOpen(cardId)}
+                    onPlaySingle={handlePlaySingle}
+                    onPlayFromHere={handlePlayFromHere}
+                    onPreview={handlePreview}
+                    onDecide={(id, action) => void handleDecide(id, action)}
+                    onNavigateToJournalAnchor={onNavigateToJournalAnchor}
+                  />
+                ))}
+              </div>
+            </section>
+          ),
+        )
       )}
     </DeskDatePageShell>
   )

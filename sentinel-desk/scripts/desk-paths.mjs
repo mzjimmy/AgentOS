@@ -53,13 +53,13 @@ export const DESK_LEGACY_CONTRACTS = [
 
 /** Legacy desk stylesheets. */
 export const DESK_LEGACY_STYLES = [
+  'src/styles/desk-audio-bar.css',
   'src/styles/desk-date-shell.css',
   'src/styles/desk-date-topbar.css',
   'src/styles/desk-tokens.css',
   'src/styles/intent-todo-page.css',
   'src/styles/journal-page.css',
   'src/styles/language-push-page.css',
-  'src/styles/morning-brief-mini-player.css',
   'src/styles/morning-brief-page.css',
   'src/styles/outbound-page.css',
   'src/styles/quick-commands-page.css',

@@ -260,12 +260,6 @@
     },
     {
       "rule": "ratchet:desk-legacy->base",
-      "from": "electron/desk/morning-brief-service.ts",
-      "to": "src/desktop-seam.ts",
-      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
-    },
-    {
-      "rule": "ratchet:desk-legacy->base",
       "from": "electron/desk/outbound-analyzer.ts",
       "to": "electron/anthropic-messages-client.ts",
       "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
@@ -496,12 +490,6 @@
       "rule": "ratchet:desk-legacy->base",
       "from": "src/components/morning-brief/MorningBriefMiniPlayer.tsx",
       "to": "src/components/types.ts",
-      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
-    },
-    {
-      "rule": "ratchet:desk-legacy->base",
-      "from": "src/components/morning-brief/MorningBriefMiniPlayer.tsx",
-      "to": "src/icon-inline.tsx",
       "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
     },
     {

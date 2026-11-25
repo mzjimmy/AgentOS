@@ -118,6 +118,7 @@ function createWorld() {
     },
     '../../electron/desk/language-push-service': {
       LanguagePushService: fakeService('LanguagePush', ['start', 'dispose', 'notifySystemResumeOrFocus']),
+      createMorningBriefCorpusProvider: (store) => ({ kind: 'morning_brief', store }),
     },
     '../../electron/desk/morning-brief-service': {
       MorningBriefService: fakeService('MorningBrief', ['start', 'dispose', 'notifySystemResumeOrFocus']),
@@ -229,6 +230,40 @@ test('service events reach the renderer through the host event port', () => {
     [DESKTOP_EVENT_CHANNELS.onJournalAutoTagChanged, { k: 'tag' }],
   ])
   assert.deepEqual(w.sent, [[DESKTOP_EVENT_CHANNELS.onFeishuJournalBridgeStatus, { k: 'feishu' }]])
+})
+
+test('Morning Brief change events wake Language Push only once the brief was actually generated', () => {
+  const w = createWorld()
+  w.mountDesk(w.host)
+  // Build both services so the mount holds a Language Push instance to notify.
+  w.registrations.find((r) => r.name === 'languagePush').getter()
+  w.registrations.find((r) => r.name === 'morningBrief').getter()
+
+  const morningBrief = w.only('MorningBrief')
+  const emit = (reason) =>
+    morningBrief.options.onChanged({ reason, date: '2026-11-23', at: '2026-11-23T09:00:00.000Z' })
+
+  for (const reason of ['running', 'error', 'swapped', 'config', 'audio']) {
+    emit(reason)
+  }
+  assert.equal(
+    w.callsOf('LanguagePush', 'notifySystemResumeOrFocus').length,
+    0,
+    'running, failed, swapped, config and audio events must not wake Language Push',
+  )
+
+  emit('generated')
+  assert.equal(
+    w.callsOf('LanguagePush', 'notifySystemResumeOrFocus').length,
+    1,
+    'a generated event wakes Language Push exactly once',
+  )
+
+  assert.equal(
+    w.broadcasts.filter(([channel]) => channel === DESKTOP_EVENT_CHANNELS.onMorningBriefChanged).length,
+    6,
+    'every reason is still broadcast to the renderer',
+  )
 })
 
 test('workspace adapters: auto-tag sees id/name/path only, outbound skips blank paths and survives read errors', () => {

@@ -25,6 +25,8 @@ import {
   type MorningBriefOverview,
   type MorningBriefSourceConfig,
 } from '../../morning-brief-contract'
+import { DeskAudioBar, DeskAudioStickyStrip, useDeskAudioSticky } from '../desk/DeskAudioBar'
+import { computeDeskAudioProgressPct, formatDeskAudioClock } from '../desk/desk-audio-bar-contract'
 import { DeskDatePageShell, DeskModalDialog } from '../desk/DeskDatePageShell'
 import { useShanghaiToday } from '../desk/useShanghaiToday'
 import { morningBriefAudioStore } from './morning-brief-audio-store'
@@ -32,13 +34,6 @@ import { morningBriefAudioStore } from './morning-brief-audio-store'
 export type MorningBriefPageProps = {
   hidden?: boolean
   onOpenModelSettings?: () => void
-}
-
-function formatClock(seconds: number): string {
-  const safe = Math.max(0, Math.floor(seconds))
-  const m = String(Math.floor(safe / 60)).padStart(2, '0')
-  const s = String(safe % 60).padStart(2, '0')
-  return `${m}:${s}`
 }
 
 function buildCopyableWeChatMarkdown(issue: MorningBriefIssue): string {
@@ -88,7 +83,6 @@ export function MorningBriefPage({ hidden = false, onOpenModelSettings }: Mornin
   const loadSeqRef = useRef(0)
   const selectedDateRef = useRef(selectedDate)
   selectedDateRef.current = selectedDate
-  const [inlinePlayerHidden, setInlinePlayerHidden] = useState(false)
 
   const showToast = useCallback((tone: 'ok' | 'error', text: string) => {
     setToast({ tone, text })
@@ -297,73 +291,45 @@ export function MorningBriefPage({ hidden = false, onOpenModelSettings }: Mornin
     setNewSourceUrl('')
   }
 
-  useEffect(() => {
-    const target = inlinePlayerRef.current
-    const root = scrollRef.current
-    if (!target || !root || typeof IntersectionObserver === 'undefined') {
-      setInlinePlayerHidden(false)
-      return
+  const showStickyStrip = useDeskAudioSticky({
+    scrollRef,
+    anchorRef: inlinePlayerRef,
+    active: Boolean(issue && (isPlayingThisIssue || audioBusyForIssue)),
+    rebindKey: issue?.date ?? null,
+  })
+
+  const progressPct = computeDeskAudioProgressPct(activeSectionForIssue, totalSections)
+
+  const audioLabels = useMemo(
+    () => ({
+      play: 'Play',
+      pause: 'Pause',
+      prev: t('morningBrief.playerPrev'),
+      next: t('morningBrief.playerNext'),
+      speed: t('morningBrief.settingSpeechRate'),
+      loopOn: t('morningBrief.playerLoopOn'),
+      loopOff: t('morningBrief.playerLoopOff'),
+    }),
+    [t],
+  )
+
+  const handleToggleAudioPlay = () => {
+    if (isPlayingThisIssue) {
+      morningBriefAudioStore.stop()
+    } else {
+      void playSegmentSequence(activeSectionForIssue)
     }
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setInlinePlayerHidden(!entry.isIntersecting)
-      },
-      { root, threshold: 0.05 },
-    )
-    observer.observe(target)
-    return () => observer.disconnect()
-  }, [issue?.date])
+  }
 
-  const speedLabel = `${audio.playbackRate.toFixed(audio.playbackRate % 1 === 0 ? 1 : 2).replace(/0$/, '')}x`
-
-  const renderPlayerActionButtons = (targetIssue: MorningBriefIssue) => (
-    <div className="mb-player-controls">
-      <button
-        type="button"
-        className="mb-player-speed"
-        aria-label={t('morningBrief.settingSpeechRate')}
-        title={t('morningBrief.settingSpeechRate')}
-        onClick={() => morningBriefAudioStore.cyclePlaybackRate()}
-      >
-        {speedLabel}
-      </button>
-      <button
-        type="button"
-        className="mb-player-nav"
-        disabled={audioBusyForIssue || activeSectionForIssue <= 0}
-        aria-label={t('morningBrief.playerPrev')}
-        onClick={() => void playSegmentSequence(Math.max(0, activeSectionForIssue - 1))}
-      >
-        <IconInline name="back" />
-      </button>
-      <button
-        type="button"
-        className="mb-player-nav"
-        disabled={audioBusyForIssue || activeSectionForIssue >= totalSections - 1}
-        aria-label={t('morningBrief.playerNext')}
-        onClick={() =>
-          void playSegmentSequence(Math.min(totalSections - 1, activeSectionForIssue + 1))
-        }
-      >
-        <IconInline name="forward" />
-      </button>
-      {targetIssue.stitchedAudioPath ? (
-        <button
-          type="button"
-          className="mb-player-file"
-          onClick={() => void window.desktop?.showItemInFolder?.(targetIssue.stitchedAudioPath!)}
-        >
-          {t('morningBrief.revealAudio')}
-        </button>
-      ) : null}
-    </div>
-  )
-
-  const showStickyStrip = Boolean(
-    issue && (isPlayingThisIssue || audioBusyForIssue) && inlinePlayerHidden,
-  )
-  const progressPct =
-    totalSections > 0 ? Math.min(100, Math.round(((activeSectionForIssue + 1) / totalSections) * 100)) : 0
+  const audioExtraActions = issue?.stitchedAudioPath ? (
+    <button
+      type="button"
+      className="desk-audio-extra-btn"
+      onClick={() => void window.desktop?.showItemInFolder?.(issue.stitchedAudioPath!)}
+    >
+      {t('morningBrief.revealAudio')}
+    </button>
+  ) : null
 
   return (
     <DeskDatePageShell
@@ -426,49 +392,42 @@ export function MorningBriefPage({ hidden = false, onOpenModelSettings }: Mornin
       }
       scrollRef={scrollRef}
       beforeScroll={
-        <>
-      {toast ? (
-        <div className={`mb-toast${toast.tone === 'error' ? ' is-error' : ''}`} role="status">
-          {toast.text}
-        </div>
-      ) : null}
-
-      {showStickyStrip && issue ? (
-        <div className="mb-sticky-strip" data-testid="morning-brief-sticky-strip">
-          <div className="mb-sticky-strip-inner">
-            <div className="mb-sticky-strip-meta">
-              <button
-                type="button"
-                className="mb-player-play"
-                disabled={audioBusyForIssue}
-                aria-label={isPlayingThisIssue ? 'Pause' : 'Play'}
-                onClick={() => {
-                  if (isPlayingThisIssue) {
-                    morningBriefAudioStore.stop()
-                  } else {
-                    void playSegmentSequence(activeSectionForIssue)
-                  }
-                }}
-              >
-                <IconInline name={isPlayingThisIssue ? 'pause' : 'play'} />
-              </button>
-              <span className="mb-player-title">
-                {t('morningBrief.playerTitle', { date: issue.headlineDateLabel })}
-              </span>
-              <span className="mb-player-sub">
-                {audioBusyForIssue
-                  ? t('morningBrief.synthesizingAudio')
-                  : `${formatClock(elapsedForIssue)} · ${Math.min(totalSections, activeSectionForIssue + 1)}/${totalSections}`}
-              </span>
-            </div>
-            {renderPlayerActionButtons(issue)}
+        toast ? (
+          <div className={`mb-toast${toast.tone === 'error' ? ' is-error' : ''}`} role="status">
+            {toast.text}
           </div>
-          <div className="mb-sticky-strip-progress">
-            <div className="mb-sticky-strip-progress-fill" style={{ width: `${progressPct}%` }} />
-          </div>
-        </div>
-      ) : null}
-        </>
+        ) : null
+      }
+      stickyOverlay={
+        issue ? (
+          <DeskAudioStickyStrip
+            visible={showStickyStrip}
+            title={t('morningBrief.playerTitle', { date: issue.headlineDateLabel })}
+            subtitle={
+              audioBusyForIssue
+                ? t('morningBrief.synthesizingAudio')
+                : `${formatDeskAudioClock(elapsedForIssue)} · ${Math.min(totalSections, activeSectionForIssue + 1)}/${totalSections}`
+            }
+            isPlaying={isPlayingThisIssue}
+            isBusy={audioBusyForIssue}
+            progressPct={progressPct}
+            playbackRate={audio.playbackRate}
+            loop={audio.loop}
+            canPrev={activeSectionForIssue > 0}
+            canNext={activeSectionForIssue < totalSections - 1}
+            onTogglePlay={handleToggleAudioPlay}
+            onCycleSpeed={() => morningBriefAudioStore.cyclePlaybackRate()}
+            onToggleLoop={() => morningBriefAudioStore.toggleLoop()}
+            onPrev={() => void playSegmentSequence(Math.max(0, activeSectionForIssue - 1))}
+            onNext={() =>
+              void playSegmentSequence(Math.min(totalSections - 1, activeSectionForIssue + 1))
+            }
+            extraActions={audioExtraActions}
+            labels={audioLabels}
+            maxWidthPx={720}
+            testId="morning-brief-sticky-strip"
+          />
+        ) : null
       }
       overlays={
         settingsOpen && draftConfig ? (
@@ -564,15 +523,22 @@ export function MorningBriefPage({ hidden = false, onOpenModelSettings }: Mornin
                       <span>{t('morningBrief.settingAutoRun')}</span>
                     </label>
                     <input
-                      type="number"
-                      min={4}
-                      max={12}
+                      type="time"
                       className="mb-input"
-                      style={{ width: '68px' }}
-                      value={draftConfig.scheduleHour}
-                      onChange={(e) =>
-                        setDraftConfig({ ...draftConfig, scheduleHour: Number(e.target.value) || 7 })
-                      }
+                      style={{ width: '96px' }}
+                      value={`${String(draftConfig.scheduleHour).padStart(2, '0')}:${String(draftConfig.scheduleMinute ?? 0).padStart(2, '0')}`}
+                      onChange={(e) => {
+                        const [hRaw, mRaw] = e.target.value.split(':')
+                        const parsedH = Number(hRaw)
+                        const parsedM = Number(mRaw)
+                        if (Number.isFinite(parsedH) && Number.isFinite(parsedM)) {
+                          setDraftConfig({
+                            ...draftConfig,
+                            scheduleHour: Math.max(4, Math.min(23, Math.round(parsedH))),
+                            scheduleMinute: Math.max(0, Math.min(59, Math.round(parsedM))),
+                          })
+                        }
+                      }}
                     />
                   </div>
                 </div>
@@ -679,39 +645,37 @@ export function MorningBriefPage({ hidden = false, onOpenModelSettings }: Mornin
               <span className="mb-byline-tag">{issue.issueTag}</span>
             </div>
 
-            <div className="mb-inline-player" ref={inlinePlayerRef} data-testid="morning-brief-player">
-              <div className="mb-inline-player-left">
-                <button
-                  type="button"
-                  className="mb-player-play"
-                  disabled={audioBusyForIssue}
-                  aria-label={isPlayingThisIssue ? 'Pause' : 'Play'}
-                  onClick={() => {
-                    if (isPlayingThisIssue) {
-                      morningBriefAudioStore.stop()
-                    } else {
-                      void playSegmentSequence(activeSectionForIssue)
-                    }
-                  }}
-                >
-                  <IconInline name={isPlayingThisIssue ? 'pause' : 'play'} />
-                </button>
-                <div className="mb-player-info">
-                  <div className="mb-player-title">
-                    {t('morningBrief.playerTitle', { date: issue.headlineDateLabel })}
-                  </div>
-                  <div className="mb-player-sub">
-                    {audioBusyForIssue
-                      ? t('morningBrief.synthesizingAudio')
-                      : `${formatClock(elapsedForIssue)} · ${t('morningBrief.playerSection', {
-                          current: Math.min(totalSections, activeSectionForIssue + 1),
-                          total: totalSections,
-                        })}`}
-                  </div>
-                </div>
-              </div>
-              {renderPlayerActionButtons(issue)}
-            </div>
+            <DeskAudioBar
+              barRef={inlinePlayerRef}
+              variant="inset"
+              className="mb-audio-bar"
+              testId="morning-brief-player"
+              loopTestId="morning-brief-loop-toggle"
+              title={t('morningBrief.playerTitle', { date: issue.headlineDateLabel })}
+              subtitle={
+                audioBusyForIssue
+                  ? t('morningBrief.synthesizingAudio')
+                  : `${formatDeskAudioClock(elapsedForIssue)} · ${t('morningBrief.playerSection', {
+                      current: Math.min(totalSections, activeSectionForIssue + 1),
+                      total: totalSections,
+                    })}`
+              }
+              isPlaying={isPlayingThisIssue}
+              isBusy={audioBusyForIssue}
+              playbackRate={audio.playbackRate}
+              loop={audio.loop}
+              canPrev={activeSectionForIssue > 0}
+              canNext={activeSectionForIssue < totalSections - 1}
+              onTogglePlay={handleToggleAudioPlay}
+              onCycleSpeed={() => morningBriefAudioStore.cyclePlaybackRate()}
+              onToggleLoop={() => morningBriefAudioStore.toggleLoop()}
+              onPrev={() => void playSegmentSequence(Math.max(0, activeSectionForIssue - 1))}
+              onNext={() =>
+                void playSegmentSequence(Math.min(totalSections - 1, activeSectionForIssue + 1))
+              }
+              extraActions={audioExtraActions}
+              labels={audioLabels}
+            />
 
             <hr className="mb-divider" />
 

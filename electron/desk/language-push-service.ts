@@ -8,14 +8,17 @@
  *   windows (e.g. Morning Brief / 早报) can plug in alongside the built-in `'journal'` source
  *   without rewriting the storage, scheduler, or UI layers.
  * - Resolves cloud model from ClaudeAgentSettingsStore (supports dedicated `modelPick` override).
- * - Runs silent daily schedule after 04:00 Asia/Shanghai cutover (optional, configurable).
+ * - Runs silent daily schedule at/after 05:00 Asia/Shanghai (configurable `scheduleHour`/`scheduleMinute`),
+ *   with a 5-minute tick, a post-boot catch-up timer, resume/focus re-checks, and ≤3 auto retries per day.
  */
 
 import type { ChatModelPick, ClaudeAgentResolvedConfig, ClaudeAgentSettingsSnapshot } from '../../src/claude-chat-types'
 import type { JournalDayResult, JournalEntry } from '../../src/journal-contract'
+import type { MorningBriefIssue } from '../../src/morning-brief-contract'
 import {
   LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS,
   LANGUAGE_PUSH_DEFAULT_SOURCE_KIND,
+  LANGUAGE_PUSH_MORNING_BRIEF_SOURCE_KIND,
   type LanguagePushActionResult,
   type LanguagePushChangedEvent,
   type LanguagePushConfig,
@@ -27,8 +30,12 @@ import {
   type LanguagePushSpeakInput,
   type LanguagePushSpeakResult,
 } from '../../src/language-push-contract'
-import { getShanghaiLogicalDay, hasPassedShanghaiCutover, shiftDateString } from './intent-todo-time'
-import { analyzeJournalForLanguagePush, type LanguagePushLlmCaller } from './language-push-analyzer'
+import { formatShanghaiParts, getShanghaiLogicalDay, shiftDateString } from './intent-todo-time'
+import {
+  analyzeJournalForLanguagePush,
+  type LanguagePushLlmCaller,
+  type LanguagePushSourceEntry,
+} from './language-push-analyzer'
 import { LanguagePushStore } from './language-push-store'
 import {
   resolveMiniMaxTtsCredentials,
@@ -51,6 +58,53 @@ export interface LanguagePushCorpusProvider {
   readEntriesForDate(date: string): Promise<JournalEntry[]>
 }
 
+export type { LanguagePushSourceEntry } from './language-push-analyzer'
+
+/** Minimal Morning Brief read seam — satisfied by `MorningBriefStore` (or its service's `.store`). */
+export interface LanguagePushMorningBriefReader {
+  getIssue(date: string): MorningBriefIssue | null
+}
+
+/**
+ * Adapts persisted Morning Brief issues (`<deskRoot>/briefings/issues/YYYY-MM-DD.json`)
+ * into Language Push corpus entries (`mb_<date>_<itemId>`) so daily news briefings feed
+ * vocab/grammar extraction alongside the journal.
+ */
+export function createMorningBriefCorpusProvider(
+  reader: LanguagePushMorningBriefReader,
+): LanguagePushCorpusProvider {
+  return {
+    kind: LANGUAGE_PUSH_MORNING_BRIEF_SOURCE_KIND,
+    readEntriesForDate: async (date: string) => {
+      const issue = reader.getIssue(date)
+      if (!issue || !Array.isArray(issue.items)) return []
+      const entries: JournalEntry[] = []
+      for (const item of issue.items) {
+        if (!item || typeof item !== 'object') continue
+        const title = (item.title || '').trim()
+        const body = (item.body || '').trim()
+        if (!title && !body) continue
+        entries.push({
+          id: `mb_${issue.date}_${item.id}`,
+          date: issue.date,
+          time: '04:30',
+          ts: `${issue.date}T04:30:00+08:00`,
+          kind: 'note',
+          body: [title, body].filter(Boolean).join('：'),
+          category: (item.category || '早报') as JournalEntry['category'],
+          tags: [issue.issueTag || '#每日AI早报'],
+          projectRefs: [],
+          source: 'local',
+          provenance: 'human',
+          images: [],
+          private: false,
+        })
+      }
+      return entries
+    },
+  }
+}
+
 export interface LanguagePushSettingsResolver {
   resolve(modelPick?: ChatModelPick): ClaudeAgentResolvedConfig
   getSnapshot(): ClaudeAgentSettingsSnapshot
@@ -64,10 +118,21 @@ export type LanguagePushServiceOptions = {
   isOnline?: () => boolean
   llmCaller?: LanguagePushLlmCaller
   ttsFetchFn?: MiniMaxTtsFetchFn
+  /** Override for the post-boot catch-up delay (tests); defaults to 10s. */
+  startupCheckDelayMs?: number
   onChanged?: (event: LanguagePushChangedEvent) => void
 }
 
-const SCHEDULE_TICK_MS = 10 * 60 * 1000
+const SCHEDULE_TICK_MS = 5 * 60 * 1000
+const STARTUP_CATCHUP_DELAY_MS = 10_000
+const MAX_AUTO_RETRIES_PER_DAY = 3
+const FOCUS_RETRY_COOLDOWN_MS = 30_000
+
+/** True once the Asia/Shanghai wall clock reaches `hour:minute` on the current Shanghai date. */
+function hasPassedShanghaiSchedule(date: Date, hour: number, minute: number): boolean {
+  const parts = formatShanghaiParts(date)
+  return parts.hour > hour || (parts.hour === hour && parts.minute >= minute)
+}
 
 export class LanguagePushService {
   readonly store: LanguagePushStore
@@ -79,6 +144,10 @@ export class LanguagePushService {
   private inflightRun: { logicalDate: string; force: boolean; promise: Promise<LanguagePushRunResult> } | null = null
   private runChain: Promise<unknown> = Promise.resolve()
   private tickTimer: ReturnType<typeof setInterval> | null = null
+  private startupTimer: ReturnType<typeof setTimeout> | null = null
+  private autoRetryDate: string | null = null
+  private autoRetryCount = 0
+  private lastAutoFailedAtMs = 0
   private disposed = false
 
   constructor(private readonly options: LanguagePushServiceOptions) {
@@ -172,6 +241,7 @@ export class LanguagePushService {
   async saveConfig(patch: Partial<LanguagePushConfig>): Promise<LanguagePushConfig> {
     const updated = await this.store.saveConfig(patch)
     this.emitChanged('config-updated')
+    if (updated.autoRunEnabled) void this.checkSchedule()
     return updated
   }
 
@@ -190,20 +260,23 @@ export class LanguagePushService {
   }
 
   /**
-   * Collects entries across the recent `corpusWindowDays` (default 7 days), newest first.
-   * Currently backed by the `'journal'` provider; future Desk providers plug in seamlessly.
+   * Collects entries across the recent `corpusWindowDays` (default 7 days), newest first,
+   * tagging each entry with the `sourceKind` of the provider that produced it so the
+   * analyzer can balance the budget and preserve provenance per source.
    */
   private async collectEntriesForRun(
     logicalDate: string,
     windowDays: number,
-  ): Promise<JournalEntry[]> {
+  ): Promise<LanguagePushSourceEntry[]> {
     const days = Math.max(1, Math.min(30, Math.floor(windowDays || LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS)))
-    const combined: JournalEntry[] = []
+    const combined: LanguagePushSourceEntry[] = []
     for (let offset = 0; offset < days; offset += 1) {
       const date = shiftDateString(logicalDate, -offset)
       for (const provider of this.corpusProviders) {
         const dayEntries = await provider.readEntriesForDate(date)
-        if (dayEntries.length > 0) combined.push(...dayEntries)
+        if (dayEntries.length > 0) {
+          combined.push(...dayEntries.map((entry) => ({ ...entry, sourceKind: provider.kind })))
+        }
       }
     }
     return combined
@@ -254,6 +327,10 @@ export class LanguagePushService {
         : getShanghaiLogicalDay(this.now(), cfg.cutoverHour)
     const force = options.force === true
 
+    if (this.disposed) {
+      return { ok: false, logicalDate, overview: this.getOverview(logicalDate), error: 'Service disposed' }
+    }
+
     const provider = this.resolveProviderDisplay()
     if (!provider.configured) {
       this.runState = 'needs_config'
@@ -286,11 +363,34 @@ export class LanguagePushService {
         llmCaller: this.options.llmCaller,
       })
 
+      if (this.disposed) {
+        this.runState = 'idle'
+        return { ok: false, logicalDate, overview: this.getOverview(logicalDate), error: 'Service disposed' }
+      }
+
       if (!result.ok) {
         this.runState = result.kind === 'needs_config' ? 'needs_config' : 'error'
         this.runError = result.message
         this.emitChanged('run-failed')
         return { ok: false, logicalDate, overview: this.getOverview(logicalDate), error: result.message }
+      }
+
+      // Do not write an empty runs/<logicalDate>.json when there were zero new entries (e.g. before
+      // Morning Brief finishes generating), otherwise hasRunFor(logicalDate) would lock out the day.
+      if (
+        !force &&
+        result.statsBase.eligibleEntries === 0 &&
+        result.candidates.length === 0 &&
+        result.corpusItems.length === 0
+      ) {
+        this.runState = 'idle'
+        this.runError = null
+        this.emitChanged('run-completed')
+        return {
+          ok: true,
+          logicalDate,
+          overview: this.getOverview(logicalDate),
+        }
       }
 
       await this.store.mergeExtractionResult({
@@ -320,16 +420,31 @@ export class LanguagePushService {
     }
   }
 
-  private async checkSchedule(): Promise<void> {
+  /**
+   * Daily auto-extraction check: runs once per logical day at/after `scheduleHour:scheduleMinute`
+   * Asia/Shanghai (default 05:00, after IntentTodo 04:00 & MorningBrief 04:30), with at most
+   * `MAX_AUTO_RETRIES_PER_DAY` automatic attempts when the run keeps failing.
+   */
+  async checkSchedule(): Promise<void> {
     if (this.disposed || this.inflightRun || !this.isOnline()) return
     const cfg = this.store.getConfig()
     if (!cfg.autoRunEnabled) return
     const nowDate = this.now()
-    if (!hasPassedShanghaiCutover(nowDate, cfg.cutoverHour)) return
+    if (!hasPassedShanghaiSchedule(nowDate, cfg.scheduleHour, cfg.scheduleMinute)) return
     const logicalDate = getShanghaiLogicalDay(nowDate, cfg.cutoverHour)
     if (this.store.hasRunFor(logicalDate)) return
     if (!this.resolveProviderDisplay().configured) return
-    await this.runExtraction({ date: logicalDate }).catch(() => undefined)
+    if (this.autoRetryDate !== logicalDate) {
+      this.autoRetryDate = logicalDate
+      this.autoRetryCount = 0
+      this.lastAutoFailedAtMs = 0
+    }
+    if (this.autoRetryCount >= MAX_AUTO_RETRIES_PER_DAY) return
+    const res = await this.runExtraction({ date: logicalDate }).catch(() => null)
+    if (!res || !res.ok) {
+      this.autoRetryCount += 1
+      this.lastAutoFailedAtMs = Date.now()
+    }
   }
 
   start(): void {
@@ -338,9 +453,17 @@ export class LanguagePushService {
       void this.checkSchedule()
     }, SCHEDULE_TICK_MS)
     if (typeof this.tickTimer.unref === 'function') this.tickTimer.unref()
+    const startupDelay = Math.max(0, this.options.startupCheckDelayMs ?? STARTUP_CATCHUP_DELAY_MS)
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = null
+      if (!this.disposed) void this.checkSchedule()
+    }, startupDelay)
+    if (typeof this.startupTimer.unref === 'function') this.startupTimer.unref()
   }
 
   notifySystemResumeOrFocus(): void {
+    if (this.disposed) return
+    if (this.lastAutoFailedAtMs > 0 && Date.now() - this.lastAutoFailedAtMs < FOCUS_RETRY_COOLDOWN_MS) return
     void this.checkSchedule()
   }
 
@@ -349,6 +472,10 @@ export class LanguagePushService {
     if (this.tickTimer) {
       clearInterval(this.tickTimer)
       this.tickTimer = null
+    }
+    if (this.startupTimer) {
+      clearTimeout(this.startupTimer)
+      this.startupTimer = null
     }
   }
 }

@@ -37,8 +37,11 @@ export type DeskDatePageShellProps = {
   onOpenCalendar?: DeskDateTopbarProps['onOpenCalendar']
   topbarRightSlot?: ReactNode
 
-  /** Optional slot directly under topbar and above the scroll area (e.g. sticky audio bar, toast). */
+  /** Optional slot directly under topbar and above the scroll area (e.g. toast). */
   beforeScroll?: ReactNode
+
+  /** Optional zero-layout-shift overlay pinned to top of scroll viewport (e.g. DeskAudioStickyStrip). */
+  stickyOverlay?: ReactNode
 
   /** Scroll container customization. */
   scrollRef?: RefObject<HTMLDivElement | null>
@@ -84,6 +87,7 @@ export function DeskDatePageShell({
   onOpenCalendar,
   topbarRightSlot,
   beforeScroll,
+  stickyOverlay,
   scrollRef,
   scrollClassName,
   innerClassName,
@@ -124,38 +128,41 @@ export function DeskDatePageShell({
 
       {beforeScroll}
 
-      <div
-        ref={scrollRef}
-        className={scrollClassName ? `desk-shell-scroll ${scrollClassName}` : 'desk-shell-scroll'}
-      >
+      <div className="desk-shell-body">
+        {stickyOverlay}
         <div
-          className={innerClassName ? `desk-shell-inner ${innerClassName}` : 'desk-shell-inner'}
+          ref={scrollRef}
+          className={scrollClassName ? `desk-shell-scroll ${scrollClassName}` : 'desk-shell-scroll'}
         >
-          {!hideHero ? (
-            <div className="desk-shell-hero" data-testid="desk-shell-hero">
-              <div className="desk-shell-hero-left">
-                <div className="desk-shell-hero-title-row">
-                  <h1 className="desk-shell-hero-date">{formatJournalHeroDate(selectedDate)}</h1>
-                  <span className="desk-shell-hero-meta">
-                    {formatWeekdayLabel(selectedDate, locale)}
-                    {heroMeta ? <> · {heroMeta}</> : null}
-                  </span>
-                  {heroLeftExtra}
+          <div
+            className={innerClassName ? `desk-shell-inner ${innerClassName}` : 'desk-shell-inner'}
+          >
+            {!hideHero ? (
+              <div className="desk-shell-hero" data-testid="desk-shell-hero">
+                <div className="desk-shell-hero-left">
+                  <div className="desk-shell-hero-title-row">
+                    <h1 className="desk-shell-hero-date">{formatJournalHeroDate(selectedDate)}</h1>
+                    <span className="desk-shell-hero-meta">
+                      {formatWeekdayLabel(selectedDate, locale)}
+                      {heroMeta ? <> · {heroMeta}</> : null}
+                    </span>
+                    {heroLeftExtra}
+                  </div>
+                  {heroSubline ? <div className="desk-shell-hero-sub">{heroSubline}</div> : null}
                 </div>
-                {heroSubline ? <div className="desk-shell-hero-sub">{heroSubline}</div> : null}
+
+                {heroRight ? (
+                  <div className="desk-shell-hero-right" ref={heroRightRef}>
+                    {heroRight}
+                  </div>
+                ) : null}
               </div>
+            ) : null}
 
-              {heroRight ? (
-                <div className="desk-shell-hero-right" ref={heroRightRef}>
-                  {heroRight}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+            {subbar ? <div className="desk-shell-subbar">{subbar}</div> : null}
 
-          {subbar ? <div className="desk-shell-subbar">{subbar}</div> : null}
-
-          {children}
+            {children}
+          </div>
         </div>
       </div>
 

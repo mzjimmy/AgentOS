@@ -306,3 +306,416 @@ test('language-push-store: deduplicates canonical words, archives corpus silentl
     rmSync(tempRoot, { recursive: true, force: true })
   }
 })
+
+test('language-push (S2): dailyLimit 24 with 18 vocab + 6 grammar is accepted by config normalization and buildDailyQueue', async () => {
+  const { LanguagePushStore } = loadTsModule(resolve(rootDir, 'electron/desk/language-push-store.ts'))
+  const { buildDailyQueue } = loadTsModule(resolve(rootDir, 'electron/desk/language-push-scheduler.ts'))
+  const { LANGUAGE_PUSH_DEFAULT_CONFIG } = loadTsModule(resolve(rootDir, 'src/language-push-contract.ts'))
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-24-'))
+
+  try {
+    const store = new LanguagePushStore({
+      getDeskRoot: () => tempRoot,
+      now: () => new Date('2026-11-23T05:00:00Z'),
+    })
+    const saved = await store.saveConfig({ dailyLimit: 24, dailyVocabLimit: 18, dailyGrammarLimit: 6 })
+    assert.equal(saved.dailyLimit, 24, 'config must accept dailyLimit 24')
+    assert.equal(saved.dailyVocabLimit, 18)
+    assert.equal(saved.dailyGrammarLimit, 6)
+    assert.equal(store.getConfig().dailyLimit, 24, 'persisted config must keep dailyLimit 24')
+
+    const makeCard = (id, lang, kind) => ({
+      id,
+      lang,
+      kind,
+      wordKey: id,
+      readingKey: '',
+      surface: id,
+      reading: '',
+      meaning: 'meaning',
+      grammarNote: kind === 'grammar' ? 'pattern' : null,
+      levelTag: lang === 'en' ? 'B2' : 'N2',
+      example: { sentence: 'ex', translation: '译', sourceDate: '2026-11-23', sourceEntryId: 'je_1' },
+      status: 'active',
+      familiarity: null,
+      exposures: 0,
+      seenDays: 1,
+      firstSeenDate: '2026-11-23',
+      lastSeenDate: '2026-11-23',
+      dueAt: '2026-11-23',
+      lastShownAt: null,
+      createdAt: '2026-11-23T00:00:00Z',
+      updatedAt: '2026-11-23T00:00:00Z',
+    })
+    const cards = [
+      ...Array.from({ length: 14 }, (_, i) => makeCard(`en_v_${i}`, 'en', 'vocab')),
+      ...Array.from({ length: 14 }, (_, i) => makeCard(`ja_v_${i}`, 'ja', 'vocab')),
+      ...Array.from({ length: 4 }, (_, i) => makeCard(`en_g_${i}`, 'en', 'grammar')),
+      ...Array.from({ length: 4 }, (_, i) => makeCard(`ja_g_${i}`, 'ja', 'grammar')),
+    ]
+    const config24 = { ...LANGUAGE_PUSH_DEFAULT_CONFIG, dailyLimit: 24, dailyVocabLimit: 18, dailyGrammarLimit: 6 }
+    const { todayCards } = buildDailyQueue(cards, '2026-11-23', config24)
+    assert.equal(todayCards.length, 24, 'daily queue must fill all 24 slots')
+    assert.equal(todayCards.filter((c) => c.kind === 'vocab').length, 18)
+    assert.equal(todayCards.filter((c) => c.kind === 'grammar').length, 6)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('language-push-player (S3): playlist auto-expands accordion, phases term→example, collapses and resets to top when loop is off', async () => {
+  const { LanguagePushPlayerController, LANGUAGE_PUSH_LOOP_STORAGE_KEY } = loadTsModule(
+    resolve(rootDir, 'src/components/language-push/language-push-player.ts'),
+  )
+  const makeCard = (id) => ({
+    id,
+    lang: 'en',
+    kind: 'vocab',
+    wordKey: id,
+    readingKey: '',
+    surface: `surface_${id}`,
+    reading: '/sɜːfɪs/',
+    meaning: '含义',
+    grammarNote: null,
+    levelTag: 'B2',
+    example: { sentence: `sentence_${id}`, translation: '译文', sourceDate: '2026-11-23', sourceEntryId: 'je_1' },
+    status: 'active',
+    familiarity: null,
+    exposures: 0,
+    seenDays: 1,
+    firstSeenDate: '2026-11-23',
+    lastSeenDate: '2026-11-23',
+    dueAt: '2026-11-23',
+    lastShownAt: null,
+    createdAt: '2026-11-23T00:00:00Z',
+    updatedAt: '2026-11-23T00:00:00Z',
+  })
+  const queue = [makeCard('c1'), makeCard('c2'), makeCard('c3')]
+
+  const spoken = []
+  const entered = []
+  const events = []
+  const storageData = new Map()
+  const controller = new LanguagePushPlayerController({
+    speak: async ({ text }) => {
+      spoken.push(text)
+      return { outcome: 'ok', provider: 'minimax' }
+    },
+    sleep: async () => true,
+    stopSpeech: () => events.push('stopSpeech'),
+    storage: {
+      getItem: (key) => (storageData.has(key) ? storageData.get(key) : null),
+      setItem: (key, value) => storageData.set(key, value),
+    },
+    onCardEnter: (card, index) => entered.push(`${card.id}@${index}`),
+    onResetToTop: () => events.push('resetToTop'),
+    onComplete: (count) => events.push(`complete:${count}`),
+  })
+
+  const transitions = []
+  controller.subscribe(() => {
+    const s = controller.getSnapshot()
+    transitions.push(`${s.activeCardId ?? '-'}:${s.phase ?? '-'}:${s.openCardId ?? '-'}`)
+  })
+
+  assert.equal(controller.getSnapshot().loop, false)
+  controller.setLoop(true)
+  assert.equal(storageData.get(LANGUAGE_PUSH_LOOP_STORAGE_KEY), '1', 'loop must persist to storage')
+  controller.setLoop(false)
+  assert.equal(storageData.get(LANGUAGE_PUSH_LOOP_STORAGE_KEY), '0')
+
+  await controller.playQueue(queue, { speed: 0.95, resolveVoiceId: () => undefined })
+
+  assert.deepEqual(spoken, [
+    'surface_c1', 'sentence_c1',
+    'surface_c2', 'sentence_c2',
+    'surface_c3', 'sentence_c3',
+  ])
+  assert.deepEqual(entered, ['c1@0', 'c2@1', 'c3@2'])
+  // Accordion auto-expands the active row and collapses the previous one
+  assert.ok(transitions.includes('c1:term:c1'), 'term phase must auto-expand card 1')
+  assert.ok(transitions.includes('c1:example:c1'), 'example phase must keep card 1 expanded')
+  assert.ok(transitions.includes('c2:term:c2'), 'card 2 must auto-expand after card 1')
+  assert.ok(
+    transitions.indexOf('c2:term:c2') > transitions.indexOf('c1:example:c1'),
+    'expanding card 2 must come after card 1 finished',
+  )
+  // Playlist finished with loop off: collapse, reset play state, jump back to top
+  const snap = controller.getSnapshot()
+  assert.equal(snap.openCardId, null)
+  assert.equal(snap.activeCardId, null)
+  assert.equal(snap.phase, null)
+  assert.equal(snap.isPlaylist, false)
+  assert.equal(snap.index, -1)
+  assert.ok(events.includes('resetToTop'), 'must scroll back to the top of the list')
+  assert.ok(events.includes('complete:3'))
+
+  // toggleOpen expands / collapses manually
+  controller.toggleOpen('c2')
+  assert.equal(controller.getSnapshot().openCardId, 'c2')
+  controller.toggleOpen('c2')
+  assert.equal(controller.getSnapshot().openCardId, null)
+})
+
+test('language-push-player (S3): loop wraps seamlessly to index 0, persists across instances, and all-error runs break instead of spinning', async () => {
+  const { LanguagePushPlayerController, LANGUAGE_PUSH_LOOP_STORAGE_KEY } = loadTsModule(
+    resolve(rootDir, 'src/components/language-push/language-push-player.ts'),
+  )
+  const makeCard = (id) => ({
+    id,
+    lang: 'en',
+    kind: 'vocab',
+    wordKey: id,
+    readingKey: '',
+    surface: `surface_${id}`,
+    reading: '',
+    meaning: '含义',
+    grammarNote: null,
+    levelTag: null,
+    example: { sentence: `sentence_${id}`, translation: '译文', sourceDate: '2026-11-23', sourceEntryId: 'je_1' },
+    status: 'active',
+    familiarity: null,
+    exposures: 0,
+    seenDays: 1,
+    firstSeenDate: '2026-11-23',
+    lastSeenDate: '2026-11-23',
+    dueAt: '2026-11-23',
+    lastShownAt: null,
+    createdAt: '2026-11-23T00:00:00Z',
+    updatedAt: '2026-11-23T00:00:00Z',
+  })
+  const queue = [makeCard('c1'), makeCard('c2'), makeCard('c3')]
+
+  const spoken = []
+  const storageData = new Map([[LANGUAGE_PUSH_LOOP_STORAGE_KEY, '1']])
+  let controller
+  controller = new LanguagePushPlayerController({
+    speak: async ({ text }) => {
+      spoken.push(text)
+      if (spoken.length >= 13) controller.stop()
+      return { outcome: 'ok', provider: 'minimax' }
+    },
+    sleep: async () => true,
+    stopSpeech: () => {},
+    storage: {
+      getItem: (key) => (storageData.has(key) ? storageData.get(key) : null),
+      setItem: (key, value) => storageData.set(key, value),
+    },
+  })
+  assert.equal(controller.getSnapshot().loop, true, 'loop must be restored from storage')
+
+  await controller.playQueue(queue, { speed: 1, resolveVoiceId: () => undefined })
+  assert.ok(spoken.length >= 13, 'loop mode must keep playing past the end of the queue')
+  assert.equal(spoken[6], 'surface_c1', 'after the last card the playlist must wrap back to index 0')
+  assert.equal(controller.getSnapshot().activeCardId, null, 'stop() must clear playing state')
+
+  // All-error queue with loop on must terminate instead of looping forever
+  const events = []
+  const broken = new LanguagePushPlayerController({
+    speak: async () => ({ outcome: 'error', provider: 'none', fallbackReason: 'boom' }),
+    sleep: async () => true,
+    stopSpeech: () => {},
+    onError: (message) => events.push(`error:${message}`),
+    onResetToTop: () => events.push('resetToTop'),
+    onComplete: (count) => events.push(`complete:${count}`),
+  })
+  broken.setLoop(true)
+  await broken.playQueue(queue, { speed: 1, resolveVoiceId: () => undefined })
+  assert.equal(broken.getSnapshot().isPlaylist, false, 'all-error loop must terminate')
+  assert.ok(events.includes('resetToTop'))
+  assert.ok(events.includes('complete:3'))
+  assert.ok(events.some((e) => e.startsWith('error:')), 'errors must surface via onError')
+})
+
+test('language-push-player (S3): playSingle keeps the row open, stepPrev/stepNext jump within the cached queue, stop cancels immediately', async () => {
+  const { LanguagePushPlayerController } = loadTsModule(
+    resolve(rootDir, 'src/components/language-push/language-push-player.ts'),
+  )
+  const makeCard = (id) => ({
+    id,
+    lang: 'en',
+    kind: 'vocab',
+    wordKey: id,
+    readingKey: '',
+    surface: `surface_${id}`,
+    reading: '',
+    meaning: '含义',
+    grammarNote: null,
+    levelTag: null,
+    example: { sentence: `sentence_${id}`, translation: '译文', sourceDate: '2026-11-23', sourceEntryId: 'je_1' },
+    status: 'active',
+    familiarity: null,
+    exposures: 0,
+    seenDays: 1,
+    firstSeenDate: '2026-11-23',
+    lastSeenDate: '2026-11-23',
+    dueAt: '2026-11-23',
+    lastShownAt: null,
+    createdAt: '2026-11-23T00:00:00Z',
+    updatedAt: '2026-11-23T00:00:00Z',
+  })
+  const queue = [makeCard('c1'), makeCard('c2'), makeCard('c3')]
+
+  // Single preview: plays one card, then keeps the accordion open on it
+  const singleSpoken = []
+  const single = new LanguagePushPlayerController({
+    speak: async ({ text }) => {
+      singleSpoken.push(text)
+      return { outcome: 'ok', provider: 'minimax' }
+    },
+    sleep: async () => true,
+    stopSpeech: () => {},
+  })
+  await single.playSingle(queue[1], { speed: 1, resolveVoiceId: () => undefined })
+  const singleSnap = single.getSnapshot()
+  assert.equal(singleSnap.openCardId, 'c2', 'single preview must keep the row expanded')
+  assert.equal(singleSnap.activeCardId, null)
+  assert.equal(singleSnap.isPlaylist, false)
+
+  // One-shot preview (drawer micro buttons): speaks a single text, no playlist state
+  await single.preview({ text: 'preview_only', lang: 'en', speed: 1 })
+  assert.equal(singleSpoken[singleSpoken.length - 1], 'preview_only')
+  assert.equal(single.getSnapshot().isPlaylist, false)
+  assert.equal(single.getSnapshot().activeCardId, null)
+
+  // Step navigation: gate the first speak so the playlist stays parked on card 1
+  let releaseFirst
+  const gate = new Promise((resolvePromise) => {
+    releaseFirst = resolvePromise
+  })
+  const spoken = []
+  const stepper = new LanguagePushPlayerController({
+    speak: async ({ text }) => {
+      spoken.push(text)
+      if (spoken.length === 1) await gate
+      return { outcome: 'ok', provider: 'minimax' }
+    },
+    sleep: async () => true,
+    stopSpeech: () => {},
+  })
+  const run = stepper.playQueue(queue, { speed: 1, resolveVoiceId: () => undefined })
+  assert.equal(stepper.getSnapshot().openCardId, 'c1')
+  assert.equal(stepper.getSnapshot().phase, 'term')
+  assert.equal(stepper.getSnapshot().isPlaylist, true)
+  assert.equal(stepper.getSnapshot().index, 0)
+  assert.equal(stepper.getSnapshot().total, 3)
+
+  stepper.stepNext()
+  assert.equal(stepper.getSnapshot().openCardId, 'c2', 'stepNext must jump to the next card')
+  assert.equal(stepper.getSnapshot().index, 1)
+  assert.ok(spoken.includes('surface_c2'))
+
+  stepper.stepPrev()
+  assert.equal(stepper.getSnapshot().openCardId, 'c1', 'stepPrev must jump back')
+  assert.equal(stepper.getSnapshot().index, 0)
+
+  releaseFirst()
+  stepper.stop()
+  await run
+  const stoppedSnap = stepper.getSnapshot()
+  assert.equal(stoppedSnap.activeCardId, null)
+  assert.equal(stoppedSnap.openCardId, null, 'stop() without keepOpen must collapse the accordion')
+  assert.equal(stoppedSnap.isPlaylist, false)
+})
+
+test('language-push-player regression (R1/R3): syncQueue prunes rated cards mid-playlist keeping activeSurface, and pass-2 total error breaks loop', async () => {
+  const { LanguagePushPlayerController } = loadTsModule(
+    resolve(rootDir, 'src/components/language-push/language-push-player.ts'),
+  )
+  const makeCard = (id) => ({
+    id,
+    lang: 'en',
+    kind: 'vocab',
+    wordKey: id,
+    readingKey: '',
+    surface: `surface_${id}`,
+    reading: '',
+    meaning: '含义',
+    grammarNote: null,
+    levelTag: null,
+    example: { sentence: `sentence_${id}`, translation: '译文', sourceDate: '2026-11-25', sourceEntryId: 'je_1' },
+    status: 'active',
+    familiarity: null,
+    exposures: 0,
+    seenDays: 1,
+    firstSeenDate: '2026-11-25',
+    lastSeenDate: '2026-11-25',
+    dueAt: '2026-11-25',
+    lastShownAt: null,
+    createdAt: '2026-11-25T00:00:00Z',
+    updatedAt: '2026-11-25T00:00:00Z',
+  })
+
+  // R1: rating removes card c1 while c1 is playing -> activeSurface stays populated & loop pass 2 does NOT replay c1
+  const q1 = [makeCard('c1'), makeCard('c2')]
+  const spoken = []
+  let synced = false
+  const player = new LanguagePushPlayerController({
+    speak: async ({ text }) => {
+      spoken.push(text)
+      if (!synced && text === 'surface_c1') {
+        synced = true
+        // User marks c1 familiar -> c1 disappears from todayCards
+        player.syncQueue([q1[1]])
+        assert.equal(player.getSnapshot().activeSurface, 'surface_c1', 'activeSurface must stay populated for now-playing bar')
+      }
+      if (spoken.filter((s) => s === 'surface_c2').length >= 2) {
+        player.stop()
+      }
+      return { outcome: 'ok', provider: 'minimax' }
+    },
+    sleep: async () => true,
+    stopSpeech: () => {},
+  })
+  player.setLoop(true)
+  await player.playQueue(q1, { speed: 1, resolveVoiceId: () => undefined })
+  assert.equal(spoken.filter((s) => s === 'surface_c1').length, 1, 'removed card c1 must not replay on loop pass 2')
+  assert.equal(spoken.filter((s) => s === 'surface_c2').length, 2, 'remaining card c2 must continue looping')
+
+  // R3: pass 1 succeeds, pass 2 fails completely -> loop must break instead of spinning endlessly
+  let passCalls = 0
+  const errors = []
+  const pass2Fail = new LanguagePushPlayerController({
+    speak: async () => {
+      passCalls += 1
+      if (passCalls <= 2) return { outcome: 'ok', provider: 'minimax' }
+      return { outcome: 'error', provider: 'none', fallbackReason: 'offline' }
+    },
+    sleep: async () => true,
+    stopSpeech: () => {},
+    onError: (msg) => errors.push(msg),
+  })
+  pass2Fail.setLoop(true)
+  await pass2Fail.playQueue([makeCard('only')], { speed: 1, resolveVoiceId: () => undefined })
+  assert.equal(pass2Fail.getSnapshot().isPlaylist, false, 'loop must terminate when pass 2 fails completely')
+  assert.equal(passCalls, 4, 'must run pass 1 (2 calls ok) + pass 2 (2 calls error) and stop')
+  assert.equal(errors.length, 2)
+})
+
+test('language-push-validator regression (R5): accepts ASCII colon, tie-bar, variant labels without double-slash; rejects bare English words, punctuation-only JA, and corrupt meaning', () => {
+  const { normalizeCardReading, validateLanguageCard } = loadTsModule(
+    resolve(rootDir, 'electron/desk/language-push-validator.ts'),
+  )
+
+  // Valid English IPA variants that must NOT be falsely rejected or double-slashed
+  assert.equal(normalizeCardReading('/di:ˈkʌplɪŋ/', 'en'), '/diːˈkʌplɪŋ/', 'ASCII colon in IPA should normalize to ː')
+  assert.equal(normalizeCardReading('/t͡ʃeɪndʒ/', 'en'), '/t͡ʃeɪndʒ/', 'IPA tie-bar t͡ʃ must be accepted')
+  assert.equal(normalizeCardReading('/ˈskɛdʒuːl/ (US)', 'en'), '/ˈskɛdʒuːl/ (US)', 'slashed IPA with region label must not be double-slashed')
+  assert.equal(normalizeCardReading('/ˈʃedjuːl/; /ˈskedʒuːl/', 'en'), '/ˈʃedjuːl/; /ˈskedʒuːl/', 'semicolon UK/US variants must be accepted')
+
+  // Missed garble that MUST be rejected
+  assert.equal(normalizeCardReading('resilience', 'en'), '', 'bare English word without IPA symbols must not be accepted as IPA')
+  assert.equal(normalizeCardReading('yappari', 'en'), '', 'bare romaji without IPA symbols must not be accepted as IPA')
+  assert.equal(normalizeCardReading('〜', 'ja'), '', 'punctuation-only JA reading must be rejected')
+  assert.equal(normalizeCardReading('()', 'ja'), '', 'parentheses-only JA reading must be rejected')
+
+  const badMeaning = validateLanguageCard({
+    lang: 'en',
+    kind: 'vocab',
+    surface: 'resilience',
+    reading: '/rɪˈzɪliəns/',
+    meaning: '韧性乱码\uFFFD',
+    exampleSentence: 'Resilience keeps services stable.',
+  })
+  assert.equal(badMeaning.ok, false, 'meaning with replacement char U+FFFD must be rejected')
+})

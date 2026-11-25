@@ -11,7 +11,7 @@ import { FeishuJournalBridgeService } from '../../electron/desk/feishu-journal-b
 import { JournalAutoTagService } from '../../electron/desk/journal-auto-tag-service'
 import { registerJournalIpc } from '../../electron/desk/journal-ipc'
 import { IntentTodoService } from '../../electron/desk/intent-todo-service'
-import { LanguagePushService } from '../../electron/desk/language-push-service'
+import { LanguagePushService, createMorningBriefCorpusProvider } from '../../electron/desk/language-push-service'
 import { registerLanguagePushIpc } from '../../electron/desk/language-push-ipc'
 import { MorningBriefService } from '../../electron/desk/morning-brief-service'
 import { registerMorningBriefIpc } from '../../electron/desk/morning-brief-ipc'
@@ -146,6 +146,7 @@ export function mountDesk(host: DeskMainHost): DeskMainHandle {
       languagePushService = new LanguagePushService({
         journalStore: getJournalStore(),
         settingsStore: host.settings.get(),
+        extraCorpusProviders: [createMorningBriefCorpusProvider(getMorningBriefService().store)],
         isOnline: () => host.net.isOnline(),
         onChanged: (event) => host.events.broadcast(DESKTOP_EVENT_CHANNELS.onLanguagePushChanged, event),
       })
@@ -160,7 +161,12 @@ export function mountDesk(host: DeskMainHost): DeskMainHandle {
         journalStore: getJournalStore(),
         settingsStore: host.settings.get(),
         isOnline: () => host.net.isOnline(),
-        onChanged: (event) => host.events.broadcast(DESKTOP_EVENT_CHANNELS.onMorningBriefChanged, event),
+        onChanged: (event) => {
+          host.events.broadcast(DESKTOP_EVENT_CHANNELS.onMorningBriefChanged, event)
+          if (event.reason === 'generated') {
+            languagePushService?.notifySystemResumeOrFocus()
+          }
+        },
       })
     }
     return morningBriefService

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -661,5 +662,1040 @@ test('language-push-tts: resolves MiniMax origin from anthropic baseUrl, synthes
   }
 })
 
+test('language-push morning brief corpus: provider maps issue items to mb_ entries and round-robins with journal without starvation, preserving sourceKind end-to-end', async () => {
+  const { LanguagePushService, createMorningBriefCorpusProvider } = loadTsModule(
+    resolve(rootDir, 'electron/desk/language-push-service.ts'),
+  )
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-mb-'))
+
+  try {
+    // --- Provider unit seam: maps MorningBriefIssue items into corpus entries ---
+    const briefIssue = {
+      date: '2026-11-23',
+      issueTag: '#每日AI早报',
+      items: [
+        { id: 'story-1', title: 'OpenAI 发布新模型', body: '新一代推理模型在编码基准上大幅领先。', sourceName: 'OpenAI', sourceUrl: 'https://example.com/1', category: '模型与研究' },
+        { id: 'story-2', title: '某 Coding Agent 开源', body: '终端智能体框架发布 2.0 版本。', sourceName: 'GitHub', sourceUrl: 'https://example.com/2', category: '开源与工具' },
+        { id: 'story-3', title: '   ', body: '', sourceName: 'Empty', sourceUrl: 'https://example.com/3', category: '产业与监管' },
+      ],
+    }
+    const provider = createMorningBriefCorpusProvider({
+      getIssue: (date) => (date === '2026-11-23' ? briefIssue : null),
+    })
+    assert.equal(provider.kind, 'morning_brief')
+    assert.deepEqual(await provider.readEntriesForDate('2026-11-24'), [], 'missing issue must yield []')
+    const briefEntries = await provider.readEntriesForDate('2026-11-23')
+    assert.equal(briefEntries.length, 2, 'empty title+body item must be dropped')
+    assert.equal(briefEntries[0].id, 'mb_2026-11-23_story-1')
+    assert.equal(briefEntries[0].date, '2026-11-23')
+    assert.equal(briefEntries[0].time, '04:30')
+    assert.ok(briefEntries[0].body.includes('OpenAI 发布新模型：'), 'title and body must join with ：')
+    assert.equal(briefEntries[0].private, false)
+
+    // --- Service seam: 6 journal entries + 4 brief items must share the daily budget ---
+    const journalEntries = Array.from({ length: 6 }, (_, i) => ({
+      id: `je_j${i + 1}`,
+      date: '2026-11-23',
+      time: `0${i + 1}:00`,
+      body: `日记第 ${i + 1} 条：今天继续打磨系统韧性与模块边界设计。`,
+      category: '工程',
+      tags: [],
+      private: false,
+      provenance: 'human',
+    }))
+    const briefItems = Array.from({ length: 4 }, (_, i) => ({
+      id: `story-${i + 1}`,
+      title: `早报第 ${i + 1} 条标题`,
+      body: `早报第 ${i + 1} 条正文，介绍业界动态。`,
+      sourceName: 'Feed',
+      sourceUrl: `https://example.com/${i + 1}`,
+      category: '模型与研究',
+    }))
+
+    const sentPrompts = []
+    const service = new LanguagePushService({
+      journalStore: {
+        getConfig: () => ({ deskRoot: tempRoot }),
+        getDay: async (date) => ({
+          ok: true,
+          date,
+          filePath: '',
+          entries: date === '2026-11-23' ? journalEntries : [],
+        }),
+      },
+      settingsStore: {
+        resolve: () => ({ apiKey: 'dummy', authToken: '', baseUrl: 'https://example.invalid', model: 'test-model', configSource: 'settings' }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [{ id: 'p1', name: 'TestProvider', model: 'test-model' }] } }),
+      },
+      extraCorpusProviders: [
+        createMorningBriefCorpusProvider({
+          getIssue: (date) => (date === '2026-11-23' ? { date, issueTag: '#每日AI早报', items: briefItems } : null),
+        }),
+      ],
+      now: () => new Date('2026-11-23T06:00:00Z'),
+      llmCaller: async (_cfg, req) => {
+        const userText = req.messages.map((m) => m.content).join('\n')
+        sentPrompts.push(userText)
+        const isJa = userText.includes('Target language: Japanese')
+        return {
+          ok: true,
+          model: 'test-model',
+          durationMs: 10,
+          text: JSON.stringify(
+            isJa
+              ? {
+                  corpus: [{ entryId: 'je_j1', translatedText: '今日もシステムの回復力と設計境界を磨き続けた。' }],
+                  cards: [
+                    {
+                      kind: 'vocab',
+                      surface: '回復力',
+                      reading: 'かいふくりょく',
+                      meaning: '韧性；恢复力',
+                      grammarNote: null,
+                      levelTag: 'N1',
+                      exampleSentence: '回復力の高い設計を目指した。',
+                      exampleTranslation: '目标是高韧性的设计。',
+                      exampleReadings: [
+                        { surface: '回復力', reading: 'かいふくりょく' },
+                        { surface: '設計', reading: 'せっけい' },
+                      ],
+                      sourceEntryId: 'je_j1',
+                    },
+                  ],
+                }
+              : {
+                  corpus: [
+                    { entryId: 'je_j1', translatedText: 'Kept polishing system resilience and module boundaries today.' },
+                    { entryId: 'mb_2026-11-23_story-1', translatedText: 'Brief item one covered fresh industry momentum.' },
+                  ],
+                  cards: [
+                    {
+                      kind: 'vocab',
+                      surface: 'resilience',
+                      reading: '/rɪˈzɪliəns/',
+                      meaning: '韧性；恢复力',
+                      grammarNote: null,
+                      levelTag: 'B2',
+                      exampleSentence: 'System resilience improves with clear module boundaries.',
+                      exampleTranslation: '清晰的模块边界能提升系统韧性。',
+                      sourceEntryId: 'je_j1',
+                    },
+                    {
+                      kind: 'vocab',
+                      surface: 'momentum',
+                      reading: '/məˈmentəm/',
+                      meaning: '势头；动能',
+                      grammarNote: null,
+                      levelTag: 'B2',
+                      exampleSentence: 'The briefing tracked fresh momentum across the industry.',
+                      exampleTranslation: '早报追踪了行业内的新势头。',
+                      sourceEntryId: 'mb_2026-11-23_story-1',
+                    },
+                  ],
+                },
+          ),
+        }
+      },
+    })
+
+    const res = await service.runExtraction({ date: '2026-11-23' })
+    assert.equal(res.ok, true)
+    assert.equal(sentPrompts.length, 2)
+    const enPrompt = sentPrompts.find((p) => p.includes('Target language: English'))
+    assert.ok(enPrompt)
+    const entryHeaders = enPrompt.match(/^--- \[/gm) ?? []
+    assert.equal(entryHeaders.length, 8, 'daily budget must widen to 8 entries')
+    assert.ok(enPrompt.includes('Morning Brief'), 'entry header must tag morning brief provenance')
+    assert.ok(enPrompt.includes('Journal'), 'entry header must tag journal provenance')
+    const journalPicked = [1, 2, 3, 4, 5, 6].filter((i) => enPrompt.includes(`[je_j${i}]`))
+    const briefPicked = [1, 2, 3, 4].filter((i) => enPrompt.includes(`[mb_2026-11-23_story-${i}]`))
+    assert.equal(journalPicked.length, 4, 'round-robin must not let 6 journal entries starve the brief')
+    assert.equal(briefPicked.length, 4, 'round-robin must not let the brief starve journal entries')
+
+    const enCards = res.overview.todayCards.filter((c) => c.lang === 'en')
+    const journalCard = enCards.find((c) => c.example.sourceEntryId === 'je_j1')
+    const briefCard = enCards.find((c) => c.example.sourceEntryId === 'mb_2026-11-23_story-1')
+    assert.ok(journalCard && briefCard)
+    assert.equal(journalCard.example.sourceKind, 'journal')
+    assert.equal(briefCard.example.sourceKind, 'morning_brief', 'card must preserve morning_brief provenance')
+
+    const corpusOnDisk = JSON.parse(readFileSync(join(tempRoot, 'language', 'corpus', '2026', '11', '2026-11-23.json'), 'utf8'))
+    const corpusKinds = new Map(corpusOnDisk.items.map((item) => [`${item.entryId}:${item.lang}`, item.sourceKind]))
+    assert.equal(corpusKinds.get('je_j1:en'), 'journal')
+    assert.equal(corpusKinds.get('mb_2026-11-23_story-1:en'), 'morning_brief', 'archived corpus must preserve morning_brief sourceKind')
+
+    // Idempotent re-run: the 2 journal entries that overflowed the daily budget of 8 are
+    // picked up, but nothing already processed (journal or brief) is ever re-extracted.
+    const second = await service.runExtraction({ date: '2026-11-23' })
+    assert.equal(second.ok, true)
+    assert.equal(sentPrompts.length, 4, 'second run must only process the 2 leftover journal entries (1 call per language)')
+    for (const prompt of sentPrompts.slice(2)) {
+      assert.ok(prompt.includes('[je_j5]') && prompt.includes('[je_j6]'))
+      assert.equal(prompt.includes('[mb_'), false, 'already-processed brief entries must not be re-extracted')
+      assert.equal(prompt.includes('[je_j1]'), false, 'already-processed journal entries must not be re-extracted')
+    }
+    const third = await service.runExtraction({ date: '2026-11-23', force: false })
+    assert.equal(third.ok, true)
+    assert.equal(sentPrompts.length, 4, 'third run must be a complete no-op (all entries processed)')
+    service.dispose()
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('language-push-analyzer: morning_brief entries bypass the journal human-provenance filter while journal ai entries stay excluded', async () => {
+  const { analyzeJournalForLanguagePush } = loadTsModule(resolve(rootDir, 'electron/desk/language-push-analyzer.ts'))
+  const { LANGUAGE_PUSH_DEFAULT_CONFIG } = loadTsModule(resolve(rootDir, 'src/language-push-contract.ts'))
+
+  const out = await analyzeJournalForLanguagePush({
+    logicalDate: '2026-11-23',
+    entries: [
+      {
+        id: 'je_ai_1',
+        date: '2026-11-23',
+        time: '08:00',
+        body: '这条是 AI 自动生成的日记摘要，不应进入外语提取语料。',
+        category: '工程',
+        tags: [],
+        private: false,
+        provenance: 'ai',
+      },
+      {
+        id: 'mb_2026-11-23_story-9',
+        date: '2026-11-23',
+        time: '04:30',
+        body: '早报条目：新一代推理模型在编码基准上大幅领先。',
+        category: '模型与研究',
+        tags: ['#每日AI早报'],
+        private: false,
+        provenance: 'ai',
+        sourceKind: 'morning_brief',
+      },
+    ],
+    processedEntryIds: {},
+    config: { ...LANGUAGE_PUSH_DEFAULT_CONFIG, enabledLangs: ['en'] },
+    resolvedModel: { apiKey: 'dummy', authToken: '', baseUrl: 'https://example.invalid', model: 'test-model' },
+    llmCaller: async () => ({
+      ok: true,
+      model: 'test-model',
+      durationMs: 5,
+      text: JSON.stringify({
+        corpus: [{ entryId: 'mb_2026-11-23_story-9', translatedText: 'A new reasoning model leapt ahead on coding benchmarks.' }],
+        cards: [
+          {
+            kind: 'vocab',
+            surface: 'benchmark',
+            reading: '/ˈbentʃmɑːk/',
+            meaning: '基准测试',
+            grammarNote: null,
+            levelTag: 'B2',
+            exampleSentence: 'The model leapt ahead on coding benchmarks.',
+            exampleTranslation: '该模型在编码基准上大幅领先。',
+            sourceEntryId: 'mb_2026-11-23_story-9',
+          },
+        ],
+      }),
+    }),
+  })
+
+  assert.equal(out.ok, true)
+  assert.equal(out.statsBase.eligibleEntries, 1, 'morning_brief entry must survive the provenance filter; journal ai entry must not')
+  assert.equal(out.corpusItems[0].sourceKind, 'morning_brief')
+  assert.equal(out.candidates[0].sourceKind, 'morning_brief')
+})
+
+test('language-push scheduler: legacy config normalizes to 05:00, 04:59 stays quiet, 05:00 auto-runs once, retries cap at 3, startup catch-up fires and dispose cleans up', async () => {
+  const { LanguagePushService } = loadTsModule(resolve(rootDir, 'electron/desk/language-push-service.ts'))
+
+  const makeHarness = (tempRoot, { nowRef, llmOk = true, startupCheckDelayMs } = {}) => {
+    const counters = { llmCalls: 0 }
+    const service = new LanguagePushService({
+      journalStore: {
+        getConfig: () => ({ deskRoot: tempRoot }),
+        getDay: async (date) => ({
+          ok: true,
+          date,
+          filePath: '',
+          entries:
+            date === '2026-11-24'
+              ? [
+                  {
+                    id: 'je_sched_1',
+                    date: '2026-11-24',
+                    time: '04:35',
+                    body: '今天继续推进外语推送的定时调度与早报语料接入。',
+                    category: '工程',
+                    tags: [],
+                    private: false,
+                    provenance: 'human',
+                  },
+                ]
+              : [],
+        }),
+      },
+      settingsStore: {
+        resolve: () => ({ apiKey: 'dummy', authToken: '', baseUrl: 'https://example.invalid', model: 'test-model', configSource: 'settings' }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [{ id: 'p1', name: 'P1', model: 'test-model' }] } }),
+      },
+      now: () => nowRef.current,
+      startupCheckDelayMs,
+      llmCaller: async (_cfg, req) => {
+        counters.llmCalls += 1
+        if (!llmOk) return { ok: false, kind: 'provider_error', message: 'boom' }
+        const userText = req.messages.map((m) => m.content).join('\n')
+        const isJa = userText.includes('Target language: Japanese')
+        return {
+          ok: true,
+          model: 'test-model',
+          durationMs: 5,
+          text: JSON.stringify(
+            isJa
+              ? {
+                  corpus: [{ entryId: 'je_sched_1', translatedText: '今朝は定時実行と朝のニュース速報コーパスの接続を進めた。' }],
+                  cards: [
+                    {
+                      kind: 'vocab',
+                      surface: '定時実行',
+                      reading: 'ていじじっこう',
+                      meaning: '定时执行',
+                      grammarNote: null,
+                      levelTag: 'N1',
+                      exampleSentence: '定時実行で毎朝の抽出を自動化する。',
+                      exampleTranslation: '通过定时执行把每天早上的提取自动化。',
+                      exampleReadings: [
+                        { surface: '定時実行', reading: 'ていじじっこう' },
+                        { surface: '毎朝', reading: 'まいあさ' },
+                        { surface: '抽出', reading: 'ちゅうしゅつ' },
+                        { surface: '自動化', reading: 'じどうか' },
+                      ],
+                      sourceEntryId: 'je_sched_1',
+                    },
+                  ],
+                }
+              : {
+                  corpus: [{ entryId: 'je_sched_1', translatedText: 'Kept wiring the 05:00 schedule and morning brief corpus today.' }],
+                  cards: [
+                    {
+                      kind: 'vocab',
+                      surface: 'schedule',
+                      reading: '/ˈʃedjuːl/',
+                      meaning: '调度；日程',
+                      grammarNote: null,
+                      levelTag: 'B2',
+                      exampleSentence: 'The schedule triggers extraction at 05:00 sharp.',
+                      exampleTranslation: '调度在 05:00 准时触发提取。',
+                      sourceEntryId: 'je_sched_1',
+                    },
+                  ],
+                },
+          ),
+        }
+      },
+    })
+    return { service, counters }
+  }
+
+  // Legacy persisted config (exactly the user's live shape) normalizes to 05:00
+  const legacyRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-legacy-'))
+  try {
+    mkdirSync(join(legacyRoot, 'language'), { recursive: true })
+    writeFileSync(
+      join(legacyRoot, 'language', 'config.json'),
+      JSON.stringify({ cutoverHour: 4, autoRunEnabled: true, modelPick: { providerId: 'p1', anthropicModel: 'deepseek-flash' } }),
+    )
+    const nowRef = { current: new Date('2026-11-23T20:59:00Z') } // 2026-11-24 04:59 Asia/Shanghai
+    const { service, counters } = makeHarness(legacyRoot, { nowRef })
+    try {
+      const cfg = service.store.getConfig()
+      assert.equal(cfg.cutoverHour, 4)
+      assert.equal(cfg.autoRunEnabled, true)
+      assert.equal(cfg.scheduleHour, 5, 'legacy config must default scheduleHour to 5')
+      assert.equal(cfg.scheduleMinute, 0, 'legacy config must default scheduleMinute to 0')
+
+      await service.checkSchedule()
+      assert.equal(counters.llmCalls, 0, '04:59 Asia/Shanghai must NOT trigger extraction')
+      assert.equal(service.store.hasRunFor('2026-11-24'), false)
+
+      nowRef.current = new Date('2026-11-23T21:00:00Z') // 05:00 Asia/Shanghai
+      await service.checkSchedule()
+      assert.equal(counters.llmCalls, 2, '05:00 Asia/Shanghai must auto-trigger (1 call per language)')
+      assert.equal(service.store.hasRunFor('2026-11-24'), true)
+
+      await service.checkSchedule()
+      assert.equal(counters.llmCalls, 2, 'same logical day must stay idempotent (run file already exists)')
+    } finally {
+      service.dispose()
+    }
+  } finally {
+    rmSync(legacyRoot, { recursive: true, force: true })
+  }
+
+  // Retry cap: at most 3 automatic attempts per logical day when the provider keeps failing
+  const retryRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-retry-'))
+  try {
+    const nowRef = { current: new Date('2026-11-23T21:05:00Z') }
+    const { service, counters } = makeHarness(retryRoot, { nowRef, llmOk: false })
+    try {
+      await service.checkSchedule()
+      await service.checkSchedule()
+      await service.checkSchedule()
+      await service.checkSchedule()
+      assert.equal(counters.llmCalls, 6, 'failed auto-runs must stop after 3 attempts (3 runs × 2 languages)')
+    } finally {
+      service.dispose()
+    }
+  } finally {
+    rmSync(retryRoot, { recursive: true, force: true })
+  }
+
+  // Startup catch-up timer fires after start() without waiting for the 5-minute tick
+  const bootRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-boot-'))
+  try {
+    const nowRef = { current: new Date('2026-11-23T22:30:00Z') } // 06:30 Asia/Shanghai
+    const { service, counters } = makeHarness(bootRoot, { nowRef, startupCheckDelayMs: 5 })
+    try {
+      service.start()
+      await new Promise((r) => setTimeout(r, 120))
+      assert.equal(counters.llmCalls, 2, 'startup catch-up timer must trigger the missed 05:00 run')
+      assert.equal(service.store.hasRunFor('2026-11-24'), true)
+    } finally {
+      service.dispose()
+    }
+  } finally {
+    rmSync(bootRoot, { recursive: true, force: true })
+  }
+
+  // dispose() before the startup delay must cancel the pending catch-up timer
+  const cancelRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-cancel-'))
+  try {
+    const nowRef = { current: new Date('2026-11-23T22:30:00Z') }
+    const { service, counters } = makeHarness(cancelRoot, { nowRef, startupCheckDelayMs: 20 })
+    service.start()
+    service.dispose()
+    await new Promise((r) => setTimeout(r, 100))
+    assert.equal(counters.llmCalls, 0, 'disposed service must never run the startup catch-up')
+  } finally {
+    rmSync(cancelRoot, { recursive: true, force: true })
+  }
+
+  // notifySystemResumeOrFocus and saveConfig({autoRunEnabled:true}) both re-check the schedule
+  const resumeRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-resume-'))
+  try {
+    const nowRef = { current: new Date('2026-11-23T22:30:00Z') }
+    const { service, counters } = makeHarness(resumeRoot, { nowRef })
+    try {
+      service.notifySystemResumeOrFocus()
+      await new Promise((r) => setTimeout(r, 40))
+      assert.equal(counters.llmCalls, 2, 'resume/focus must trigger the missed run')
+
+      const secondRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-savecfg-'))
+      try {
+        const { service: svc2, counters: c2 } = makeHarness(secondRoot, { nowRef })
+        try {
+          await svc2.saveConfig({ autoRunEnabled: true })
+          await new Promise((r) => setTimeout(r, 40))
+          assert.equal(c2.llmCalls, 2, 'enabling autoRunEnabled via saveConfig must trigger the schedule check')
+        } finally {
+          svc2.dispose()
+        }
+      } finally {
+        rmSync(secondRoot, { recursive: true, force: true })
+      }
+    } finally {
+      service.dispose()
+    }
+  } finally {
+    rmSync(resumeRoot, { recursive: true, force: true })
+  }
+})
+
+test('language-push mount wiring: mount.ts feeds MorningBriefStore into LanguagePushService and both desk guardrails stay green', () => {
+  const mountSource = readFileSync(resolve(rootDir, 'sentinel-desk/main/mount.ts'), 'utf8')
+  assert.match(mountSource, /createMorningBriefCorpusProvider/, 'mount.ts must import the morning brief corpus provider')
+  assert.match(
+    mountSource,
+    /extraCorpusProviders:\s*\[createMorningBriefCorpusProvider\(getMorningBriefService\(\)\.store\)\]/,
+    'LanguagePushService must receive the MorningBriefStore-backed corpus provider',
+  )
+
+  execFileSync(process.execPath, [resolve(rootDir, 'sentinel-desk/scripts/desk-boundary.mjs')], { cwd: rootDir, stdio: 'pipe' })
+  execFileSync(process.execPath, [resolve(rootDir, 'sentinel-desk/scripts/upstream-surface.mjs')], { cwd: rootDir, stdio: 'pipe' })
+})
+
+test('language-push card morning brief source: morning_brief cards render plain-text brief source without journal jump, locales stay 1:1', () => {
+  const cardSource = readFileSync(resolve(rootDir, 'src/components/language-push/LanguageCard.tsx'), 'utf8')
+  const zh = JSON.parse(readFileSync(resolve(rootDir, 'src/locales/zh.json'), 'utf8'))
+  const en = JSON.parse(readFileSync(resolve(rootDir, 'src/locales/en.json'), 'utf8'))
+
+  assert.match(cardSource, /card\.example\.sourceKind === 'morning_brief'/, 'card must branch on morning_brief sourceKind')
+  assert.match(cardSource, /t\('languagePush\.exampleLabelMorningBrief'\)/)
+  assert.match(cardSource, /t\('languagePush\.sourceMorningBrief'/)
+  assert.match(
+    cardSource,
+    /isMorningBrief \? \([\s\S]*?lp-meta[\s\S]*?\) : card\.example\.sourceDate && onNavigateToJournalAnchor \? \(/,
+    'morning_brief cards must render plain-text source and never the journal jump button',
+  )
+
+  assert.equal(zh.languagePush.exampleLabelMorningBrief, '早报语境例句')
+  assert.equal(zh.languagePush.sourceMorningBrief, '早报 · {{date}}')
+  assert.equal(en.languagePush.exampleLabelMorningBrief, 'From Morning Brief')
+  assert.equal(en.languagePush.sourceMorningBrief, 'Brief · {{date}}')
+})
+
+test('language-push regression (F1): empty auto-run before morning brief arrives does not lock out later extraction once brief lands', async () => {
+  const { LanguagePushService, createMorningBriefCorpusProvider } = loadTsModule(
+    resolve(rootDir, 'electron/desk/language-push-service.ts'),
+  )
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-f1-'))
+  try {
+    let briefReady = false
+    let llmCalls = 0
+    const service = new LanguagePushService({
+      journalStore: {
+        getConfig: () => ({ deskRoot: tempRoot }),
+        getDay: async (date) => ({ ok: true, date, filePath: '', entries: [] }),
+      },
+      settingsStore: {
+        resolve: () => ({ apiKey: 'k', authToken: '', baseUrl: 'https://example.invalid', model: 'deepseek-flash', configSource: 'settings' }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [{ id: 'p1', name: 'DeepSeek', model: 'deepseek-flash' }] } }),
+      },
+      extraCorpusProviders: [
+        createMorningBriefCorpusProvider({
+          getIssue: (date) =>
+            briefReady && date === '2026-11-25'
+              ? {
+                  date: '2026-11-25',
+                  issueTag: '#每日AI早报',
+                  items: [
+                    {
+                      id: 'mbs_late_1',
+                      title: '循环 Transformer 正式落地通用编码',
+                      body: '最新模型在长上下文推理与工具编排上显著提升稳定性与吞吐量。',
+                      category: '模型与研究',
+                    },
+                  ],
+                }
+              : null,
+        }),
+      ],
+      now: () => new Date('2026-11-24T21:05:00Z'), // 2026-11-25 05:05 Asia/Shanghai
+      llmCaller: async (_cfg, req) => {
+        llmCalls += 1
+        const isJa = req.messages.some((m) => m.content.includes('Target language: Japanese'))
+        return {
+          ok: true,
+          model: 'deepseek-flash',
+          durationMs: 5,
+          text: JSON.stringify(
+            isJa
+              ? {
+                  corpus: [{ entryId: 'mb_2026-11-25_mbs_late_1', translatedText: '循環型トランスフォーマーが汎用コーディングに導入された。' }],
+                  cards: [
+                    {
+                      kind: 'vocab',
+                      surface: '汎用',
+                      reading: 'はんよう',
+                      meaning: '通用',
+                      grammarNote: null,
+                      levelTag: 'N1',
+                      exampleSentence: '汎用コーディングの安定性が向上した。',
+                      exampleTranslation: '通用编码的稳定性得到提升。',
+                      exampleReadings: [
+                        { surface: '汎用', reading: 'はんよう' },
+                        { surface: '安定性', reading: 'あんていせい' },
+                        { surface: '向上', reading: 'こうじょう' },
+                      ],
+                      sourceEntryId: 'mb_2026-11-25_mbs_late_1',
+                    },
+                  ],
+                }
+              : {
+                  corpus: [{ entryId: 'mb_2026-11-25_mbs_late_1', translatedText: 'Recurrent transformers landed in general-purpose coding.' }],
+                  cards: [
+                    {
+                      kind: 'vocab',
+                      surface: 'resilience',
+                      reading: '/rɪˈzɪliəns/',
+                      meaning: '韧性；稳定性',
+                      grammarNote: null,
+                      levelTag: 'B2',
+                      exampleSentence: 'The new runtime improved coding resilience.',
+                      exampleTranslation: '新运行时提升了编码稳定性。',
+                      sourceEntryId: 'mb_2026-11-25_mbs_late_1',
+                    },
+                  ],
+                },
+          ),
+        }
+      },
+    })
+    try {
+      // 05:05 before morning brief has finished writing -> 0 eligible entries, must NOT write empty runs/2026-11-25.json
+      await service.checkSchedule()
+      assert.equal(llmCalls, 0)
+      assert.equal(service.store.hasRunFor('2026-11-25'), false, 'empty run must not write runs/2026-11-25.json and lock out the day')
+
+      // Morning brief finishes seconds later -> subsequent checkSchedule() must extract it automatically
+      briefReady = true
+      await service.checkSchedule()
+      assert.equal(llmCalls, 2, 'must extract automatically once morning brief lands')
+      assert.equal(service.store.hasRunFor('2026-11-25'), true)
+    } finally {
+      service.dispose()
+    }
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('language-push regression (F2): MiniMax-M3.1-Flash JA 4-entry slice only marks actually sent entries as processed', async () => {
+  const { analyzeJournalForLanguagePush } = loadTsModule(resolve(rootDir, 'electron/desk/language-push-analyzer.ts'))
+  const { LANGUAGE_PUSH_DEFAULT_CONFIG } = loadTsModule(resolve(rootDir, 'src/language-push-contract.ts'))
+
+  const entries = Array.from({ length: 6 }, (_, i) => ({
+    id: `mb_2026-11-25_item_${i + 1}`,
+    date: '2026-11-25',
+    time: '04:30',
+    body: `第 ${i + 1} 条早报关于大模型架构与智能体工具链的深度工程实践总结。`,
+    category: '模型与研究',
+    tags: ['#每日AI早报'],
+    private: false,
+    provenance: 'human',
+    sourceKind: 'morning_brief',
+  }))
+
+  const out = await analyzeJournalForLanguagePush({
+    logicalDate: '2026-11-25',
+    entries,
+    processedEntryIds: {},
+    config: { ...LANGUAGE_PUSH_DEFAULT_CONFIG, enabledLangs: ['ja'] },
+    resolvedModel: { apiKey: 'dummy', authToken: '', baseUrl: 'https://example.invalid', model: 'MiniMax-M3.1-Flash' },
+    llmCaller: async () => ({
+      ok: true,
+      model: 'MiniMax-M3.1-Flash',
+      durationMs: 10,
+      text: JSON.stringify({
+        corpus: [{ entryId: 'mb_2026-11-25_item_1', translatedText: '大規模モデルの設計実践をまとめた。' }],
+        cards: [
+          {
+            kind: 'vocab',
+            surface: '実践',
+            reading: 'じっせん',
+            meaning: '实践',
+            grammarNote: null,
+            levelTag: 'N2',
+            exampleSentence: '現場での実践を通じて品質を高める。',
+            exampleTranslation: '通过一线实践提升质量。',
+            exampleReadings: [
+              { surface: '現場', reading: 'げんば' },
+              { surface: '実践', reading: 'じっせん' },
+              { surface: '品質', reading: 'ひんしつ' },
+            ],
+            sourceEntryId: 'mb_2026-11-25_item_1',
+          },
+        ],
+      }),
+    }),
+  })
+
+  assert.equal(out.ok, true)
+  assert.equal(out.processedEntryIds.length, 4, 'only the 4 entries actually sent to MiniMax-M3.1-Flash JA may be marked processed')
+  assert.equal(out.processedEntryIds.includes('mb_2026-11-25_item_5:ja'), false)
+  assert.equal(out.processedEntryIds.includes('mb_2026-11-25_item_6:ja'), false)
+})
+
+test('language-push regression (F3): dispose() prevents in-flight extraction from persisting files after disposal', async () => {
+  const { LanguagePushService } = loadTsModule(resolve(rootDir, 'electron/desk/language-push-service.ts'))
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-f3-'))
+  try {
+    let releaseLlm
+    const llmStarted = new Promise((resolveStart) => {
+      releaseLlm = resolveStart
+    })
+    let resolveResponse
+    const llmGate = new Promise((r) => {
+      resolveResponse = r
+    })
+
+    const service = new LanguagePushService({
+      journalStore: {
+        getConfig: () => ({ deskRoot: tempRoot }),
+        getDay: async (date) => ({
+          ok: true,
+          date,
+          filePath: '',
+          entries:
+            date === '2026-11-25'
+              ? [{ id: 'je_disp_1', date: '2026-11-25', time: '09:00', body: '今天测试服务销毁时的并发持久化保护机制。', category: '工程', tags: [], private: false, provenance: 'human' }]
+              : [],
+        }),
+      },
+      settingsStore: {
+        resolve: () => ({ apiKey: 'k', authToken: '', baseUrl: 'https://example.invalid', model: 'deepseek-flash', configSource: 'settings' }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [{ id: 'p1', name: 'DeepSeek', model: 'deepseek-flash' }] } }),
+      },
+      now: () => new Date('2026-11-25T02:00:00Z'),
+      llmCaller: async () => {
+        releaseLlm()
+        await llmGate
+        return {
+          ok: true,
+          model: 'deepseek-flash',
+          durationMs: 5,
+          text: JSON.stringify({
+            corpus: [{ entryId: 'je_disp_1', translatedText: 'Tested disposal persistence guard.' }],
+            cards: [
+              {
+                kind: 'vocab',
+                surface: 'disposal',
+                reading: '/dɪˈspəʊzəl/',
+                meaning: '销毁；处置',
+                grammarNote: null,
+                levelTag: 'B2',
+                exampleSentence: 'Clean disposal prevents post-shutdown disk writes.',
+                exampleTranslation: '干净销毁可避免关停后的磁盘写入。',
+                sourceEntryId: 'je_disp_1',
+              },
+            ],
+          }),
+        }
+      },
+    })
+
+    await service.saveConfig({ enabledLangs: ['en'] })
+    const runPromise = service.runExtraction({ date: '2026-11-25' })
+    await llmStarted
+    service.dispose()
+    resolveResponse()
+    const res = await runPromise
+    assert.equal(res.ok, false, 'run finishing after dispose() must not report ok')
+    assert.equal(service.store.hasRunFor('2026-11-25'), false, 'disposed service must not persist runs/2026-11-25.json')
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
 
 
+
+
+
+test('language-push-validator (S1): English IPA accepts θ, normalizes wrappers, and rejects garbled readings; Japanese enforces pure kana + glued-lowercase guard', () => {
+  const { validateLanguageCard, normalizeCardReading } = loadTsModule(
+    resolve(rootDir, 'electron/desk/language-push-validator.ts'),
+  )
+
+  const enCard = (reading) =>
+    validateLanguageCard({
+      lang: 'en',
+      kind: 'vocab',
+      surface: 'throughput',
+      reading,
+      meaning: '吞吐量',
+      exampleSentence: 'Higher throughput keeps the queue drained under load.',
+    })
+
+  // Legitimate IPA with θ (U+03B8) must pass — the old FOREIGN_SCRIPT_RE killed it
+  const theta = enCard('/ˈθruːpʊt/')
+  assert.equal(theta.ok, true, 'valid IPA with θ must pass validation')
+  assert.equal(theta.normalizedReading, '/ˈθruːpʊt/')
+  assert.equal(enCard('/θɪŋk/').ok, true, 'think IPA must pass')
+
+  // Unwrapped IPA gets wrapped; stray inner spaces next to slashes are trimmed
+  assert.equal(normalizeCardReading('θɪŋk', 'en'), '/θɪŋk/')
+  assert.equal(normalizeCardReading('/rɪˈɡɑːrdləs ... /', 'en'), '/rɪˈɡɑːrdləs .../')
+  assert.equal(normalizeCardReading('rɪˈzɪliəns', 'en'), '/rɪˈzɪliəns/')
+
+  // Garbled EN readings are intercepted
+  assert.equal(normalizeCardReading('/ˈθruːpʊt�/', 'en'), '', 'replacement char must be rejected')
+  assert.equal(normalizeCardReading('/θɪŋk α/', 'en'), '', 'non-θ Greek must be rejected')
+  assert.equal(normalizeCardReading('/hǎo/', 'en'), '', 'pinyin tone marks must be rejected')
+  assert.equal(normalizeCardReading('???', 'en'), '', 'punctuation-only garbage must be rejected')
+  assert.equal(normalizeCardReading('N/A', 'en'), '', 'N/A placeholder must be rejected')
+  assert.equal(normalizeCardReading('/@#$%^&*+=<>|/', 'en'), '', 'non-IPA symbols must be rejected')
+  assert.equal(normalizeCardReading('思考', 'en'), '', 'CJK in EN reading must be rejected')
+  assert.equal(normalizeCardReading('/θɪŋk/'.repeat(30), 'en'), '', 'overlong reading must be rejected')
+  assert.equal(enCard('/θɪŋk α/').ok, false, 'card with garbled EN reading must be rejected')
+  assert.equal(enCard('/ˈθruːpʊt�/').ok, false, 'card with corrupt EN reading must be rejected')
+
+  // EN surface / example still reject every Greek letter including θ, plus corrupt chars
+  assert.equal(
+    validateLanguageCard({
+      lang: 'en',
+      kind: 'vocab',
+      surface: 'throughput θ',
+      meaning: '吞吐量',
+      exampleSentence: 'Higher throughput keeps the queue drained under load.',
+    }).ok,
+    false,
+    'θ in EN surface must still be rejected',
+  )
+  assert.equal(
+    validateLanguageCard({
+      lang: 'en',
+      kind: 'vocab',
+      surface: 'throughput',
+      meaning: '吞吐量',
+      exampleSentence: 'Higher throughput� keeps the queue drained.',
+    }).ok,
+    false,
+    'corrupt char in EN example must be rejected',
+  )
+
+  // Japanese readings: strict kana-only whitelist
+  const jaCard = (reading, sentence = '生成された内容が有用かどうかにかかわらず、環境を整える。') =>
+    validateLanguageCard({
+      lang: 'ja',
+      kind: 'grammar',
+      surface: '〜にかかわらず',
+      reading,
+      meaning: '不管……都……',
+      exampleSentence: sentence,
+    })
+  assert.equal(jaCard('にかかわらず').ok, true)
+  assert.equal(normalizeCardReading('にかかわらず、かんきょう', 'ja'), 'にかかわらず、かんきょう')
+  assert.equal(normalizeCardReading('にかかわらず★', 'ja'), '', 'stray symbol in JA reading must be rejected')
+  assert.equal(normalizeCardReading('にかかわらず�', 'ja'), '', 'replacement char in JA reading must be rejected')
+  assert.equal(normalizeCardReading('にかかわらず漢字', 'ja'), '', 'kanji in JA reading must be rejected')
+  assert.equal(normalizeCardReading('にかかわらずabc', 'ja'), '', 'latin in JA reading must be rejected')
+  assert.equal(jaCard('にかかわらず★').ok, false, 'card with symbol-garbled JA reading must be rejected')
+
+  // Lowercase letters glued to kana/kanji are token-collapse artifacts
+  assert.equal(jaCard('にかかわらず', 'これはaきのテストです。').ok, false, 'aき artifact must be rejected')
+  assert.equal(jaCard('にかかわらず', '開発流程でdeき管理する。').ok, false, 'deき artifact must be rejected')
+  assert.equal(jaCard('にかかわらず', 'タスクをk管理する。').ok, false, 'k管理 artifact must be rejected')
+  // Standalone lowercase single letters are no longer silently allowed
+  assert.equal(jaCard('にかかわらず', 'これは a のテストです。').ok, false, 'stray lowercase latin must be rejected')
+  // Tech acronyms and uppercase grades remain allowed
+  assert.equal(jaCard('にかかわらず', 'AIを使って毎日の振り返りを自動化している。').ok, true, 'AI must stay allowed')
+  assert.equal(jaCard('にかかわらず', 'N2の試験に向けて毎日少しずつ勉強している。').ok, true, 'N2 must stay allowed')
+
+  // Corrupt chars anywhere in JA fields are rejected
+  assert.equal(jaCard('にかかわらず', '環境を整える。').ok, false, 'control char in JA example must be rejected')
+})
+
+test('language-push-store (S1): buildOverview sanitizes legacy corrupted readings on the returned copy without mutating deck.json', () => {
+  const { LanguagePushStore } = loadTsModule(resolve(rootDir, 'electron/desk/language-push-store.ts'))
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-lp-sanitize-'))
+
+  try {
+    const nowIso = '2026-11-23T01:00:00.000Z'
+    const makeStored = (id, lang, reading) => ({
+      id,
+      lang,
+      kind: 'vocab',
+      wordKey: id,
+      readingKey: reading,
+      surface: lang === 'en' ? 'think' : '疎結合',
+      reading,
+      meaning: '含义',
+      grammarNote: null,
+      levelTag: lang === 'en' ? 'B2' : 'N2',
+      example: {
+        sentence: lang === 'en' ? 'Think in systems.' : '疎結合な設計を意識した。',
+        translation: '译文',
+        sourceDate: '2026-11-23',
+        sourceEntryId: 'je_1',
+      },
+      status: 'active',
+      familiarity: null,
+      lastRatedAt: null,
+      exposures: 0,
+      seenDays: 1,
+      firstSeenDate: '2026-11-23',
+      lastSeenDate: '2026-11-23',
+      extractedDate: '2026-11-23',
+      dueAt: '2026-11-23',
+      lastShownAt: null,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    })
+
+    const deckPayload = {
+      version: 2,
+      cards: {
+        lp_en_bad: makeStored('lp_en_bad', 'en', '/θɪŋk α�/'),
+        lp_en_wrap: makeStored('lp_en_wrap', 'en', 'θɪŋk'),
+        lp_ja_bad: makeStored('lp_ja_bad', 'ja', 'そかつごう★漢'),
+      },
+      processedEntryIds: {},
+    }
+    const deckPath = join(tempRoot, 'language', 'deck.json')
+    mkdirSync(dirname(deckPath), { recursive: true })
+    const deckText = `${JSON.stringify(deckPayload, null, 2)}\n`
+    writeFileSync(deckPath, deckText, 'utf8')
+
+    const store = new LanguagePushStore({
+      getDeskRoot: () => tempRoot,
+      now: () => new Date('2026-11-23T05:00:00Z'),
+    })
+    const overview = store.buildOverview({
+      runState: 'idle',
+      runError: null,
+      providerDisplay: { providerName: 'DeepSeek', modelName: 'deepseek-flash', configured: true, ttsConfigured: false },
+    })
+
+    const byId = new Map(overview.todayCards.map((c) => [c.id, c]))
+    assert.equal(byId.get('lp_en_bad').reading, '', 'corrupt EN IPA must never reach the renderer')
+    assert.equal(byId.get('lp_en_wrap').reading, '/θɪŋk/', 'legacy unwrapped IPA must be normalized for display')
+    assert.equal(byId.get('lp_ja_bad').reading, '', 'garbled JA reading must never reach the renderer')
+
+    assert.equal(readFileSync(deckPath, 'utf8'), deckText, 'deck.json on disk must stay byte-identical after read')
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('language-push UI (S4): Option 3 accordion index list, IPA-safe fonts, 24-card setting pill, single loop entry, locales 1:1', () => {
+  const pageSource = readFileSync(resolve(rootDir, 'src/components/language-push/LanguagePushPage.tsx'), 'utf8')
+  const cardSource = readFileSync(resolve(rootDir, 'src/components/language-push/LanguageCard.tsx'), 'utf8')
+  const css = readFileSync(resolve(rootDir, 'src/styles/language-push-page.css'), 'utf8')
+  const zh = JSON.parse(readFileSync(resolve(rootDir, 'src/locales/zh.json'), 'utf8'))
+  const en = JSON.parse(readFileSync(resolve(rootDir, 'src/locales/en.json'), 'utf8'))
+
+  // C2: 24-card daily capacity in the settings pills
+  assert.match(pageSource, /\[6, 8, 12, 16, 24\]/, 'settings must offer the 24-card pill')
+
+  // C3/C4: pure player controller drives the accordion UI & unified DeskAudioBar
+  assert.match(pageSource, /language-push-player/, 'page must use the pure player controller')
+  assert.match(pageSource, /useSyncExternalStore/, 'page must subscribe to the player snapshot')
+  assert.match(pageSource, /<DeskAudioBar\b/, 'unified DeskAudioBar must replace legacy lp-nowplaying')
+  assert.match(pageSource, /<DeskAudioStickyStrip\b/, 'overlay DeskAudioStickyStrip must exist')
+  assert.match(pageSource, /lp-group/, 'grouped index sections must exist')
+  assert.match(cardSource, /lp-row-bar/, 'accordion row bar must exist')
+  assert.match(cardSource, /lp-drawer-wrap/, 'accordion drawer must exist')
+  assert.match(cardSource, /t\('languagePush\.playFromHere'\)/, 'drawer must offer play-from-here')
+
+  // C1: IPA-safe sans font stack; the mono font (missing IPA glyphs) is gone
+  assert.equal(css.includes('var(--j-font-mono)'), false, 'readings must never use the mono font')
+  assert.match(css, /Lucida Grande/, 'IPA reading font stack must be present')
+
+  // C4: dead CSS from the old card grid is removed
+  for (const dead of ['.lp-grid', '.lp-card-top', '.lp-hero', '.lp-speak-btn', '.lp-example-box', '.lp-actions-rating']) {
+    assert.equal(css.includes(dead), false, `dead CSS rule ${dead} must be removed`)
+  }
+
+  // C4: single entry point for the loop toggle (unified DeskAudioBar handler)
+  const loopToggles = pageSource.match(/toggleLoop/g) ?? []
+  assert.equal(loopToggles.length, 1, 'loop toggle must have exactly one entry point')
+  assert.match(pageSource, /loop:\s*playerSnap\.loop/)
+
+  // Locale parity for the new keys
+  for (const key of [
+    'groupVocab',
+    'groupGrammar',
+    'groupCount',
+    'loop',
+    'nowPlayingTerm',
+    'nowPlayingExample',
+    'prevCard',
+    'nextCard',
+    'stopPlayback',
+    'playFromHere',
+  ]) {
+    assert.equal(typeof zh.languagePush?.[key], 'string', `missing zh.languagePush.${key}`)
+    assert.equal(typeof en.languagePush?.[key], 'string', `missing en.languagePush.${key}`)
+  }
+})
+
+test('sleepCancellable: clears its 60ms poll interval on normal completion and on cancellation, leaving no timer behind', async () => {
+  const { sleepCancellable } = loadTsModule(
+    resolve(rootDir, 'src/components/language-push/speech-helper.ts'),
+  )
+  const prevWindow = globalThis.window
+
+  const createFakeTimers = () => {
+    let nextId = 1
+    const timers = new Map()
+    const cleared = []
+    const windowStub = {
+      setTimeout: (fn, ms) => {
+        const id = nextId++
+        timers.set(id, { id, fn, ms, kind: 'timeout' })
+        return id
+      },
+      clearTimeout: (id) => {
+        cleared.push(['clearTimeout', id])
+        timers.delete(id)
+      },
+      setInterval: (fn, ms) => {
+        const id = nextId++
+        timers.set(id, { id, fn, ms, kind: 'interval' })
+        return id
+      },
+      clearInterval: (id) => {
+        cleared.push(['clearInterval', id])
+        timers.delete(id)
+      },
+    }
+    return {
+      windowStub,
+      timers,
+      cleared,
+      find: (kind, ms) => [...timers.values()].find((t) => t.kind === kind && t.ms === ms),
+      fire: (timer) => {
+        assert.ok(timer, 'the timer must still be pending')
+        // A fired timeout is no longer pending, exactly like the DOM timer queue.
+        if (timer.kind === 'timeout') timers.delete(timer.id)
+        timer.fn()
+      },
+    }
+  }
+
+  try {
+    // --- normal completion: the sleep timer fires and the poll interval must go with it ---
+    const normal = createFakeTimers()
+    globalThis.window = normal.windowStub
+
+    const pending = sleepCancellable(100, () => false)
+    const sleepTimer = normal.find('timeout', 100)
+    const pollTimer = normal.find('interval', 60)
+    assert.ok(sleepTimer, 'sleepCancellable schedules its own timeout')
+    assert.ok(pollTimer, 'sleepCancellable schedules a 60ms cancellation poll')
+
+    normal.fire(sleepTimer)
+    const normalResult = await pending
+
+    assert.equal(normalResult, true, 'a completed sleep resolves true')
+    assert.ok(
+      normal.cleared.some(([kind, id]) => kind === 'clearInterval' && id === pollTimer.id),
+      'the 60ms poll interval is cleared when the timeout finishes normally',
+    )
+    assert.equal(
+      normal.timers.size,
+      0,
+      `no timer may survive the sleep, left behind: ${JSON.stringify([...normal.timers.values()])}`,
+    )
+
+    // --- cancellation: both the sleep timeout and the poll interval must be cleared ---
+    const cancelled = createFakeTimers()
+    globalThis.window = cancelled.windowStub
+
+    let isCancelled = false
+    const cancelledPending = sleepCancellable(100, () => isCancelled)
+    const cancelledSleepTimer = cancelled.find('timeout', 100)
+    const cancelledPollTimer = cancelled.find('interval', 60)
+    assert.ok(cancelledSleepTimer, 'sleepCancellable schedules its own timeout')
+    assert.ok(cancelledPollTimer, 'sleepCancellable schedules a 60ms cancellation poll')
+
+    isCancelled = true
+    cancelled.fire(cancelledPollTimer)
+    const cancelledResult = await cancelledPending
+
+    assert.equal(cancelledResult, false, 'a cancelled sleep resolves false')
+    assert.ok(
+      cancelled.cleared.some(([kind, id]) => kind === 'clearTimeout' && id === cancelledSleepTimer.id),
+      'the sleep timeout is cleared when the sleep is cancelled',
+    )
+    assert.ok(
+      cancelled.cleared.some(([kind, id]) => kind === 'clearInterval' && id === cancelledPollTimer.id),
+      'the 60ms poll interval is cleared when the sleep is cancelled',
+    )
+    assert.equal(
+      cancelled.timers.size,
+      0,
+      `no timer may survive a cancelled sleep, left behind: ${JSON.stringify([...cancelled.timers.values()])}`,
+    )
+  } finally {
+    globalThis.window = prevWindow
+  }
+})

@@ -103,17 +103,21 @@ function playAudioBlob(blob: Blob, isCancelled: () => boolean): Promise<'ended' 
     activeAudio = audio
     activeObjectUrl = url
 
+    let settled = false
+    const cancel = () => finish('cancelled')
     const finish = (outcome: 'ended' | 'cancelled' | 'error') => {
+      if (settled) return
+      settled = true
       if (activeAudio === audio) activeAudio = null
       if (activeObjectUrl === url) {
         URL.revokeObjectURL(url)
         activeObjectUrl = null
       }
-      activeCancelResolver = null
+      if (activeCancelResolver === cancel) activeCancelResolver = null
       resolve(outcome)
     }
 
-    activeCancelResolver = () => finish('cancelled')
+    activeCancelResolver = cancel
     audio.onended = () => finish('ended')
     audio.onerror = () => finish('error')
     void audio.play().catch(() => finish('error'))
@@ -148,13 +152,14 @@ function playOfflineUtterance(
       const preferred = pickPreferredVoice(window.speechSynthesis.getVoices(), lang)
       if (preferred) utterance.voice = preferred
       let settled = false
+      const cancel = () => done('cancelled')
       const done = (outcome: 'ended' | 'cancelled' | 'error') => {
         if (settled) return
         settled = true
-        activeCancelResolver = null
+        if (activeCancelResolver === cancel) activeCancelResolver = null
         resolve(outcome)
       }
-      activeCancelResolver = () => done('cancelled')
+      activeCancelResolver = cancel
       utterance.onend = () => done('ended')
       utterance.onerror = () => done('error')
       window.speechSynthesis.speak(utterance)
@@ -240,14 +245,21 @@ export function sleepCancellable(ms: number, isCancelled: () => boolean): Promis
       resolve(false)
       return
     }
-    const timer = window.setTimeout(() => resolve(!isCancelled()), ms)
+    let settled = false
+    const timer = window.setTimeout(() => {
+      if (settled) return
+      settled = true
+      window.clearInterval(check)
+      resolve(!isCancelled())
+    }, ms)
     const check = window.setInterval(() => {
+      if (settled) return
       if (isCancelled()) {
+        settled = true
         window.clearTimeout(timer)
         window.clearInterval(check)
         resolve(false)
       }
     }, 60)
-    window.setTimeout(() => window.clearInterval(check), ms + 20)
   })
 }

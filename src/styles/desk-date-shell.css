@@ -1,5 +1,14 @@
 /* SentinelDesk 共享「日期归档页」画布、Hero、分段标签与设置弹窗骨架样式（仅由 DeskDatePageShell.tsx 引入） */
 
+.desk-shell-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .desk-shell-scroll {
   flex: 1;
   min-height: 0;

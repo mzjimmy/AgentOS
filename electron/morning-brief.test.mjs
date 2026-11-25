@@ -362,3 +362,536 @@ test('morning-brief: exposes authoritative runningDate during background run and
     rmSync(tempRoot, { recursive: true, force: true })
   }
 })
+
+test('morning-brief-audio-store: resets to first section on completion and supports loop playback toggle', async () => {
+  const { MorningBriefAudioStore } = loadTsModule(
+    resolve(rootDir, 'src/components/morning-brief/morning-brief-audio-store.ts'),
+  )
+
+  const prevWindow = globalThis.window
+  const prevAudio = globalThis.Audio
+  const storage = new Map()
+  const playedSections = []
+  let playCount = 0
+  let onPlayHook = null
+
+  class FakeAudio {
+    constructor(src) {
+      this.src = src
+      this.playbackRate = 1
+      this.onended = null
+      this.onerror = null
+    }
+    pause() {}
+    play() {
+      playCount += 1
+      onPlayHook?.(playCount, this)
+      queueMicrotask(() => {
+        if (this.src) this.onended?.()
+      })
+      return Promise.resolve()
+    }
+  }
+
+  const fakeSegments = [
+    { sectionIndex: 0, text: '导语', audioBase64: 'AAA', mime: 'audio/mpeg' },
+    { sectionIndex: 1, text: '第一条', audioBase64: 'BBB', mime: 'audio/mpeg' },
+    { sectionIndex: 2, text: '第二条', audioBase64: 'CCC', mime: 'audio/mpeg' },
+  ]
+
+  globalThis.Audio = FakeAudio
+  globalThis.window = {
+    localStorage: {
+      getItem: (k) => (storage.has(k) ? storage.get(k) : null),
+      setItem: (k, v) => {
+        storage.set(k, String(v))
+      },
+    },
+    desktop: {
+      speakMorningBrief: async () => ({
+        ok: true,
+        segments: fakeSegments,
+      }),
+    },
+  }
+
+  try {
+    const store = new MorningBriefAudioStore()
+    const seen = []
+    store.subscribe(() => {
+      const snap = store.getSnapshot()
+      if (snap.isPlaying) seen.push(snap.activeSection)
+    })
+
+    // 1) Non-loop playback: finishes all segments, then resets activeSection to 0 so next play starts from beginning
+    await store.play({
+      date: '2026-11-24',
+      headlineDateLabel: '11月24日',
+      totalSections: 3,
+      startSection: 0,
+    })
+    assert.equal(store.getSnapshot().isPlaying, false)
+    assert.equal(store.getSnapshot().activeSection, 0)
+    assert.equal(store.getSnapshot().elapsedSec, 0)
+    assert.equal(playCount, 3)
+
+    // Replay from snapshot.activeSection (simulates user clicking Play again after finishing)
+    await store.play({
+      date: '2026-11-24',
+      headlineDateLabel: '11月24日',
+      totalSections: 3,
+      startSection: store.getSnapshot().activeSection,
+    })
+    assert.equal(playCount, 6, 'clicking play after finishing should replay all 3 segments from the first')
+    assert.equal(store.getSnapshot().activeSection, 0)
+
+    // 2) Loop toggle persists and wraps playback back to section 0 until loop is turned off
+    assert.equal(store.getSnapshot().loop, false)
+    assert.equal(store.toggleLoop(), true)
+    assert.equal(store.getSnapshot().loop, true)
+    assert.equal(storage.get('agentos:morning-brief:playback-loop:v1'), '1')
+
+    playCount = 0
+    playedSections.length = 0
+    onPlayHook = (count) => {
+      playedSections.push(store.getSnapshot().activeSection)
+      // Turn off loop during the second pass so it finishes cleanly at the end of pass 2
+      if (count === 4) {
+        store.toggleLoop()
+      }
+    }
+
+    await store.play({
+      date: '2026-11-24',
+      headlineDateLabel: '11月24日',
+      totalSections: 3,
+      startSection: 1,
+    })
+    assert.deepEqual(playedSections, [1, 2, 0, 1, 2], 'loop should wrap from end back to section 0')
+    assert.equal(store.getSnapshot().loop, false)
+    assert.equal(store.getSnapshot().isPlaying, false)
+    assert.equal(store.getSnapshot().activeSection, 0)
+
+    // 3) Manual stop mid-playback preserves activeSection for resume
+    onPlayHook = (count) => {
+      if (count === 2) {
+        store.stop()
+      }
+    }
+    playCount = 0
+    await store.play({
+      date: '2026-11-24',
+      headlineDateLabel: '11月24日',
+      totalSections: 3,
+      startSection: 0,
+    })
+    assert.equal(store.getSnapshot().isPlaying, false)
+    assert.equal(store.getSnapshot().activeSection, 1, 'manual pause should keep current section')
+  } finally {
+    globalThis.window = prevWindow
+    globalThis.Audio = prevAudio
+  }
+})
+
+test('morning-brief-service: defaults to auto-run at 04:30 Asia/Shanghai (30m after intent-todo 04:00) and triggers idempotently', async () => {
+  const { MorningBriefService } = loadTsModule(resolve(rootDir, 'electron/desk/morning-brief-service.ts'))
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-mb-sched-'))
+  let currentTime = new Date('2026-11-24T04:29:00+08:00')
+  let llmCalls = 0
+
+  try {
+    const svc = new MorningBriefService({
+      journalStore: { getConfig: () => ({ deskRoot: tempRoot }) },
+      settingsStore: {
+        resolve: () => ({
+          apiKey: 'sk-ant-test',
+          authToken: '',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-20250514',
+          configSource: 'settings',
+        }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [] } }),
+      },
+      now: () => currentTime,
+      feedFetchFn: async () =>
+        new Response(
+          `<rss version="2.0"><channel><item><title>Scheduled Brief Story</title><link>https://example.com/s1</link><description>Test</description></item></channel></rss>`,
+          { status: 200 },
+        ),
+      llmCaller: async (_cfg, req) => {
+        llmCalls += 1
+        const ids = [...req.messages[0].content.matchAll(/"id":\s*"(mbc_[a-f0-9]+)"/g)].map((m) => m[1])
+        return {
+          ok: true,
+          model: 'claude-sonnet-4-20250514',
+          text: JSON.stringify({
+            leadSummary: '定时早报自动生成。',
+            themes: ['智能体'],
+            introParagraph: '今日早报综述。',
+            selected: [
+              {
+                candidateId: ids[0],
+                title: '定时早报自动生成',
+                body: '自动定时任务验证。',
+                spokenText: '自动定时任务验证。',
+                category: 'Coding Agent',
+              },
+            ],
+            backups: [],
+          }),
+        }
+      },
+    })
+
+    const cfg = svc.getConfig()
+    assert.equal(cfg.autoRunEnabled, true)
+    assert.equal(cfg.scheduleHour, 4)
+    assert.equal(cfg.scheduleMinute, 30)
+
+    // 04:29 should NOT trigger
+    await svc.maybeAutoRun()
+    assert.equal(llmCalls, 0)
+    assert.equal(svc.store.getIssue('2026-11-24'), null)
+
+    // 04:30 SHOULD trigger once
+    currentTime = new Date('2026-11-24T04:30:00+08:00')
+    await svc.maybeAutoRun()
+    assert.equal(llmCalls, 1)
+    assert.ok(svc.store.getIssue('2026-11-24'))
+
+    // Subsequent ticks same day should be idempotent (no second run)
+    currentTime = new Date('2026-11-24T08:00:00+08:00')
+    await svc.maybeAutoRun()
+    assert.equal(llmCalls, 1)
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('morning-brief-service: reports running while in flight, error on failure, and generated only after the issue is persisted', async () => {
+  const { MorningBriefService } = loadTsModule(resolve(rootDir, 'electron/desk/morning-brief-service.ts'))
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-mb-events-'))
+
+  const settingsStore = (configured) => ({
+    resolve: () => ({
+      apiKey: configured ? 'sk-ant-test' : '',
+      authToken: '',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-sonnet-4-20250514',
+      configSource: 'settings',
+    }),
+    getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [] } }),
+  })
+
+  const rssResponse = () =>
+    new Response(
+      `<rss version="2.0"><channel><item><title>AI Agent Launch</title><link>https://example.com/a1</link><description>Test</description></item></channel></rss>`,
+      { status: 200 },
+    )
+
+  try {
+    // --- success path: running -> generated, and generated implies persisted ---
+    const events = []
+    let releaseLlm
+    const llmGate = new Promise((resolvePromise) => {
+      releaseLlm = resolvePromise
+    })
+
+    const svc = new MorningBriefService({
+      journalStore: { getConfig: () => ({ deskRoot: tempRoot }) },
+      settingsStore: settingsStore(true),
+      now: () => new Date('2026-11-23T09:00:00+08:00'),
+      feedFetchFn: async () => rssResponse(),
+      llmCaller: async (_cfg, req) => {
+        await llmGate
+        const ids = [...req.messages[0].content.matchAll(/"id":\s*"(mbc_[a-f0-9]+)"/g)].map((m) => m[1])
+        return {
+          ok: true,
+          model: 'claude-sonnet-4-20250514',
+          text: JSON.stringify({
+            leadSummary: 'AI Agent 正式发布。',
+            themes: ['智能体'],
+            introParagraph: '今日早报综述。',
+            selected: [
+              {
+                candidateId: ids[0],
+                title: 'AI Agent 正式发布',
+                body: '背景生成完成。',
+                spokenText: '背景生成完成。',
+                category: 'Coding Agent',
+              },
+            ],
+            backups: [],
+          }),
+        }
+      },
+      onChanged: (event) => {
+        events.push({
+          reason: event.reason,
+          date: event.date,
+          persisted: Boolean(svc.store.getIssue(event.date)),
+        })
+      },
+    })
+
+    const inflight = svc.runBrief({ date: '2026-11-23', force: true })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.deepEqual(
+      events.map((e) => e.reason),
+      ['running'],
+      'an in-flight run reports running, never generated',
+    )
+    assert.equal(events[0].persisted, false, 'nothing is persisted while the run is in flight')
+    assert.equal(svc.store.getIssue('2026-11-23'), null, 'no issue on disk before the run completes')
+
+    releaseLlm()
+    const done = await inflight
+    assert.equal(done.ok, true)
+    assert.deepEqual(
+      events.map((e) => e.reason),
+      ['running', 'generated'],
+      'generated fires exactly once, after the run completed',
+    )
+    assert.equal(events.at(-1).persisted, true, 'generated fires only after the issue is persisted')
+    assert.ok(svc.store.getIssue('2026-11-23'), 'the issue is on disk when generated fires')
+
+    // --- missing provider credentials: error, never generated ---
+    const configEvents = []
+    const unconfigured = new MorningBriefService({
+      journalStore: { getConfig: () => ({ deskRoot: tempRoot }) },
+      settingsStore: settingsStore(false),
+      now: () => new Date('2026-11-23T09:00:00+08:00'),
+      onChanged: (event) => configEvents.push(event.reason),
+    })
+    const unconfiguredRes = await unconfigured.runBrief({ date: '2026-11-23', force: true })
+    assert.equal(unconfiguredRes.ok, false)
+    assert.deepEqual(configEvents, ['error'], 'a missing provider config reports error, not generated')
+
+    // --- synthesis failure: running -> error, never generated ---
+    const synthEvents = []
+    const synthFailed = new MorningBriefService({
+      journalStore: { getConfig: () => ({ deskRoot: tempRoot }) },
+      settingsStore: settingsStore(true),
+      now: () => new Date('2026-11-23T09:00:00+08:00'),
+      feedFetchFn: async () => rssResponse(),
+      llmCaller: async () => ({ ok: false, kind: 'provider_error', message: 'provider exploded', durationMs: 1 }),
+      onChanged: (event) => synthEvents.push(event.reason),
+    })
+    const synthRes = await synthFailed.runBrief({ date: '2026-11-23', force: true })
+    assert.equal(synthRes.ok, false)
+    assert.deepEqual(
+      synthEvents,
+      ['running', 'error'],
+      'a synthesis failure reports error, not generated',
+    )
+
+    // --- thrown exception: running -> error, never generated ---
+    const thrownEvents = []
+    const thrown = new MorningBriefService({
+      journalStore: { getConfig: () => ({ deskRoot: tempRoot }) },
+      settingsStore: settingsStore(true),
+      now: () => new Date('2026-11-23T09:00:00+08:00'),
+      feedFetchFn: async () => {
+        throw new Error('network exploded')
+      },
+      onChanged: (event) => thrownEvents.push(event.reason),
+    })
+    const thrownRes = await thrown.runBrief({ date: '2026-11-23', force: true })
+    assert.equal(thrownRes.ok, false)
+    assert.deepEqual(
+      thrownEvents,
+      ['running', 'error'],
+      'an unexpected exception reports error, not generated',
+    )
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('morning-brief-service: start() keeps its startup catch-up timer and dispose() clears it', () => {
+  const { MorningBriefService } = loadTsModule(resolve(rootDir, 'electron/desk/morning-brief-service.ts'))
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-mb-timer-'))
+
+  const realSetTimeout = globalThis.setTimeout
+  const realClearTimeout = globalThis.clearTimeout
+  const realSetInterval = globalThis.setInterval
+  const realClearInterval = globalThis.clearInterval
+
+  const timeouts = []
+  const intervals = []
+  const clearedTimeouts = []
+  const clearedIntervals = []
+  let nextHandle = 1
+
+  try {
+    globalThis.setTimeout = (fn, ms) => {
+      const handle = { id: nextHandle++, fn, ms }
+      timeouts.push(handle)
+      return handle
+    }
+    globalThis.clearTimeout = (handle) => {
+      clearedTimeouts.push(handle)
+    }
+    globalThis.setInterval = (fn, ms) => {
+      const handle = { id: nextHandle++, fn, ms }
+      intervals.push(handle)
+      return handle
+    }
+    globalThis.clearInterval = (handle) => {
+      clearedIntervals.push(handle)
+    }
+
+    const svc = new MorningBriefService({
+      journalStore: { getConfig: () => ({ deskRoot: tempRoot }) },
+      settingsStore: {
+        resolve: () => ({
+          apiKey: 'sk-ant-test',
+          authToken: '',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-20250514',
+          configSource: 'settings',
+        }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [] } }),
+      },
+      now: () => new Date('2026-11-24T04:30:00+08:00'),
+    })
+
+    svc.start()
+
+    const startupTimer = timeouts.find((t) => t.ms === 10_000)
+    assert.ok(startupTimer, 'start() schedules a 10s startup catch-up timer')
+    const tickTimer = intervals.find((i) => i.ms === 5 * 60 * 1000)
+    assert.ok(tickTimer, 'start() schedules the schedule tick interval')
+
+    svc.dispose()
+
+    assert.ok(
+      clearedTimeouts.includes(startupTimer),
+      'dispose() clears the startup catch-up timer it scheduled',
+    )
+    assert.ok(clearedIntervals.includes(tickTimer), 'dispose() clears the schedule tick interval')
+  } finally {
+    globalThis.setTimeout = realSetTimeout
+    globalThis.clearTimeout = realClearTimeout
+    globalThis.setInterval = realSetInterval
+    globalThis.clearInterval = realClearInterval
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test('morning-brief-service: dispose() during an in-flight feed or LLM call aborts cloud synthesis and disk persistence', async () => {
+  const { MorningBriefService } = loadTsModule(resolve(rootDir, 'electron/desk/morning-brief-service.ts'))
+  const tempRoot = mkdtempSync(join(tmpdir(), 'agentos-mb-dispose-inflight-'))
+
+  try {
+    // Case 1: disposed while feed fetch is pending -> must never call LLM or persist issue
+    let releaseFeed
+    const feedGate = new Promise((resolvePromise) => {
+      releaseFeed = resolvePromise
+    })
+    let llmCallsAfterFeedDispose = 0
+    const events1 = []
+
+    const svc1 = new MorningBriefService({
+      journalStore: { getConfig: () => ({ deskRoot: tempRoot }) },
+      settingsStore: {
+        resolve: () => ({
+          apiKey: 'sk-ant-test',
+          authToken: '',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-20250514',
+          configSource: 'settings',
+        }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [] } }),
+      },
+      now: () => new Date('2026-11-24T09:00:00+08:00'),
+      feedFetchFn: async () => {
+        await feedGate
+        return new Response(
+          `<rss version="2.0"><channel><item><title>AI Agent Launch</title><link>https://example.com/a1</link><description>Test</description></item></channel></rss>`,
+          { status: 200 },
+        )
+      },
+      llmCaller: async () => {
+        llmCallsAfterFeedDispose += 1
+        return { ok: false, kind: 'provider_error', message: 'should not be called' }
+      },
+      onChanged: (e) => events1.push(e.reason),
+    })
+
+    const run1 = svc1.runBrief({ date: '2026-11-24', force: true })
+    await new Promise((r) => setTimeout(r, 15))
+    svc1.dispose()
+    releaseFeed()
+    const res1 = await run1
+
+    assert.equal(res1.ok, false, 'run disposed during feed fetch must return ok: false')
+    assert.equal(llmCallsAfterFeedDispose, 0, 'disposal during feed fetch must not initiate a cloud LLM call')
+    assert.equal(svc1.store.getIssue('2026-11-24'), null, 'disposed run must not write an issue to disk')
+    assert.deepEqual(events1, ['running'], 'no generated/error event should fire after dispose')
+
+    // Case 2: disposed while LLM synthesis is pending -> must not persist issue
+    let releaseLlm
+    const llmGate = new Promise((resolvePromise) => {
+      releaseLlm = resolvePromise
+    })
+    const events2 = []
+
+    const svc2 = new MorningBriefService({
+      journalStore: { getConfig: () => ({ deskRoot: tempRoot }) },
+      settingsStore: {
+        resolve: () => ({
+          apiKey: 'sk-ant-test',
+          authToken: '',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-20250514',
+          configSource: 'settings',
+        }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [] } }),
+      },
+      now: () => new Date('2026-11-25T09:00:00+08:00'),
+      feedFetchFn: async () =>
+        new Response(
+          `<rss version="2.0"><channel><item><title>AI Agent Launch</title><link>https://example.com/a2</link><description>Test</description></item></channel></rss>`,
+          { status: 200 },
+        ),
+      llmCaller: async (_cfg, req) => {
+        await llmGate
+        const ids = [...req.messages[0].content.matchAll(/"id":\s*"(mbc_[a-f0-9]+)"/g)].map((m) => m[1])
+        return {
+          ok: true,
+          model: 'claude-sonnet-4-20250514',
+          text: JSON.stringify({
+            leadSummary: 'Late brief',
+            themes: ['AI'],
+            introParagraph: 'Intro',
+            selected: [
+              {
+                candidateId: ids[0],
+                title: 'Late story',
+                body: 'Should not persist after dispose.',
+                spokenText: 'Should not persist.',
+                category: 'Coding Agent',
+              },
+            ],
+            backup: [],
+          }),
+        }
+      },
+      onChanged: (e) => events2.push(e.reason),
+    })
+
+    const run2 = svc2.runBrief({ date: '2026-11-25', force: true })
+    await new Promise((r) => setTimeout(r, 25))
+    svc2.dispose()
+    releaseLlm()
+    const res2 = await run2
+
+    assert.equal(res2.ok, false, 'run disposed during LLM synthesis must return ok: false')
+    assert.equal(svc2.store.getIssue('2026-11-25'), null, 'disposal during LLM synthesis must not write an issue to disk')
+    assert.deepEqual(events2, ['running'], 'no generated/error event should fire after dispose')
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})

@@ -1,5 +1,5 @@
 /**
- * Orchestration service & standalone IPC registrar for SentinelDesk Morning Brief.
+ * Orchestration service for SentinelDesk Morning Brief.
  *
  * - Daily schedule runs at most once per Asia/Shanghai morning after `scheduleHour` when enabled
  *   (no wasteful 5-minute polling).
@@ -7,9 +7,7 @@
  *   MiniMax HD Mandarin TTS synthesis & MP3 stitching.
  */
 
-import type { IpcMain } from 'electron'
 import type { ChatModelPick, ClaudeAgentResolvedConfig, ClaudeAgentSettingsSnapshot } from '../../src/claude-chat-types'
-import { DESKTOP_INVOKE_CHANNELS } from '../../src/desktop-seam'
 import type {
   MorningBriefChangedEvent,
   MorningBriefConfig,
@@ -20,7 +18,7 @@ import type {
   MorningBriefSpeakResult,
   MorningBriefSwapResult,
 } from '../../src/morning-brief-contract'
-import { getShanghaiLogicalDay, hasPassedShanghaiCutover } from './intent-todo-time'
+import { formatShanghaiParts, getShanghaiLogicalDay } from './intent-todo-time'
 import { resolveMiniMaxTtsCredentials, type MiniMaxTtsFetchFn } from './language-push-tts'
 import { synthesizeMorningBriefIssue, type MorningBriefLlmCaller } from './morning-brief-analyzer'
 import { fetchAllMorningBriefCandidates, type MorningBriefFetchFn } from './morning-brief-fetcher'
@@ -47,8 +45,14 @@ export type MorningBriefServiceOptions = {
   onChanged?: (event: MorningBriefChangedEvent) => void
 }
 
-const SCHEDULE_TICK_MS = 15 * 60 * 1000
+const SCHEDULE_TICK_MS = 5 * 60 * 1000
+const MAX_AUTO_RETRIES_PER_DAY = 3
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+function hasPassedShanghaiSchedule(date: Date, hour: number, minute: number): boolean {
+  const parts = formatShanghaiParts(date)
+  return parts.hour > hour || (parts.hour === hour && parts.minute >= minute)
+}
 
 export class MorningBriefService {
   readonly store: MorningBriefStore
@@ -59,6 +63,9 @@ export class MorningBriefService {
   private lastError: string | null = null
   private inflightRun: Promise<MorningBriefRunResult> | null = null
   private tickTimer: ReturnType<typeof setInterval> | null = null
+  private startupTimer: ReturnType<typeof setTimeout> | null = null
+  private autoRetryDate: string | null = null
+  private autoRetryCount = 0
   private disposed = false
 
   constructor(private readonly options: MorningBriefServiceOptions) {
@@ -113,9 +120,11 @@ export class MorningBriefService {
       void this.maybeAutoRun()
     }, SCHEDULE_TICK_MS)
     this.tickTimer.unref?.()
-    setTimeout(() => {
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = null
       if (!this.disposed) void this.maybeAutoRun()
-    }, 10_000).unref?.()
+    }, 10_000)
+    this.startupTimer.unref?.()
   }
 
   dispose(): void {
@@ -123,6 +132,10 @@ export class MorningBriefService {
     if (this.tickTimer) {
       clearInterval(this.tickTimer)
       this.tickTimer = null
+    }
+    if (this.startupTimer) {
+      clearTimeout(this.startupTimer)
+      this.startupTimer = null
     }
   }
 
@@ -137,11 +150,17 @@ export class MorningBriefService {
     const cfg = this.store.getConfig()
     if (!cfg.autoRunEnabled || !this.isOnline()) return
     const nowDate = this.now()
-    if (!hasPassedShanghaiCutover(nowDate, cfg.scheduleHour)) return
+    if (!hasPassedShanghaiSchedule(nowDate, cfg.scheduleHour, cfg.scheduleMinute)) return
     const today = getShanghaiLogicalDay(nowDate, 4)
     if (this.store.getIssue(today)) return
     const info = this.resolveProviderInfo()
     if (!info.configured) return
+    if (this.autoRetryDate !== today) {
+      this.autoRetryDate = today
+      this.autoRetryCount = 0
+    }
+    if (this.autoRetryCount >= MAX_AUTO_RETRIES_PER_DAY) return
+    this.autoRetryCount += 1
     await this.runBrief({ date: today, force: false })
   }
 
@@ -174,6 +193,9 @@ export class MorningBriefService {
     const saved = this.store.saveConfig(patch)
     const today = getShanghaiLogicalDay(this.now(), 4)
     this.emitChanged('config', today)
+    if (saved.autoRunEnabled) {
+      void this.maybeAutoRun()
+    }
     return saved
   }
 
@@ -209,18 +231,22 @@ export class MorningBriefService {
   }
 
   private async executeRun(targetDate: string): Promise<MorningBriefRunResult> {
+    if (this.disposed) {
+      return { ok: false, date: targetDate, error: 'Service disposed' }
+    }
+
     const info = this.resolveProviderInfo()
     if (!info.configured) {
       this.runState = 'needs_config'
       this.lastError = '尚未配置云端模型凭据。'
-      this.emitChanged('generated', targetDate)
+      this.emitChanged('error', targetDate)
       return { ok: false, date: targetDate, error: this.lastError }
     }
 
     this.runState = 'running'
     this.runningDate = targetDate
     this.lastError = null
-    this.emitChanged('generated', targetDate)
+    this.emitChanged('running', targetDate)
 
     try {
       const config = this.store.getConfig()
@@ -228,6 +254,12 @@ export class MorningBriefService {
         sources: config.sources,
         fetchFn: this.options.feedFetchFn,
       })
+
+      if (this.disposed) {
+        this.runState = 'idle'
+        this.runningDate = null
+        return { ok: false, date: targetDate, error: 'Service disposed' }
+      }
 
       const synth = await synthesizeMorningBriefIssue({
         date: targetDate,
@@ -240,11 +272,17 @@ export class MorningBriefService {
         nowIso: this.now().toISOString(),
       })
 
+      if (this.disposed) {
+        this.runState = 'idle'
+        this.runningDate = null
+        return { ok: false, date: targetDate, error: 'Service disposed' }
+      }
+
       if (!synth.ok) {
         this.runState = synth.kind === 'needs_config' ? 'needs_config' : 'error'
         this.runningDate = null
         this.lastError = synth.message
-        this.emitChanged('generated', targetDate)
+        this.emitChanged('error', targetDate)
         return { ok: false, date: targetDate, error: synth.message }
       }
 
@@ -255,11 +293,16 @@ export class MorningBriefService {
       this.emitChanged('generated', targetDate)
       return { ok: true, date: targetDate, issue: saved }
     } catch (error) {
+      if (this.disposed) {
+        this.runState = 'idle'
+        this.runningDate = null
+        return { ok: false, date: targetDate, error: 'Service disposed' }
+      }
       const msg = error instanceof Error ? error.message : '早报生成失败'
       this.runState = 'error'
       this.runningDate = null
       this.lastError = msg
-      this.emitChanged('generated', targetDate)
+      this.emitChanged('error', targetDate)
       return { ok: false, date: targetDate, error: msg }
     }
   }
@@ -306,47 +349,5 @@ export class MorningBriefService {
   getSegmentsPreview(date: string) {
     const issue = this.store.getIssue(date)
     return issue ? buildMorningBriefSpeakSegments(issue) : []
-  }
-}
-
-export function registerMorningBriefIpc(
-  ipcMain: IpcMain,
-  serviceOrGetter: MorningBriefService | (() => MorningBriefService),
-): () => void {
-  const resolveService = typeof serviceOrGetter === 'function' ? serviceOrGetter : () => serviceOrGetter
-
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getMorningBriefOverview, (_event, selectedDate?: unknown) =>
-    resolveService().getOverview(typeof selectedDate === 'string' ? selectedDate : undefined),
-  )
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.runMorningBrief, (_event, options?: unknown) => {
-    const safe = options && typeof options === 'object' ? (options as { date?: unknown; force?: unknown }) : {}
-    return resolveService().runBrief({
-      date: typeof safe.date === 'string' ? safe.date : undefined,
-      force: safe.force === true,
-    })
-  })
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.swapMorningBriefItem, (_event, date: unknown, itemId: unknown) =>
-    resolveService().swapItem(String(date || ''), String(itemId || '')),
-  )
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getMorningBriefConfig, () => resolveService().getConfig())
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveMorningBriefConfig, (_event, patch: unknown) =>
-    resolveService().saveConfig((patch && typeof patch === 'object' ? patch : {}) as Partial<MorningBriefConfig>),
-  )
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.speakMorningBrief, (_event, input: unknown) => {
-    const safe = input && typeof input === 'object' ? (input as Partial<MorningBriefSpeakInput>) : {}
-    return resolveService().speak({
-      date: typeof safe.date === 'string' ? safe.date : '',
-      sectionIndex: typeof safe.sectionIndex === 'number' ? safe.sectionIndex : undefined,
-      stitchFullIssue: safe.stitchFullIssue === true,
-    })
-  })
-
-  return () => {
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.getMorningBriefOverview)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.runMorningBrief)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.swapMorningBriefItem)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.getMorningBriefConfig)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.saveMorningBriefConfig)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.speakMorningBrief)
   }
 }

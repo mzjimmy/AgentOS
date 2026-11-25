@@ -41,9 +41,20 @@ import {
   validateLanguageCard,
 } from './language-push-validator'
 
-const MAX_ENTRIES_PER_RUN = 6
-const MAX_TOTAL_INPUT_CHARS = 2_400
+const MAX_ENTRIES_PER_RUN = 8
+const MAX_TOTAL_INPUT_CHARS = 3_200
 const MIN_ENTRY_BODY_CHARS = 10
+
+/** A journal-shaped corpus entry tagged with the provider source it came from. */
+export type LanguagePushSourceEntry = JournalEntry & { sourceKind?: LanguagePushCorpusSourceKind }
+
+type EligibleEntry = {
+  id: string
+  date: string
+  time: string
+  safeBody: string
+  sourceKind: LanguagePushCorpusSourceKind
+}
 
 export type LanguagePushFamiliaritySummary = {
   unfamiliar: Array<{ surface: string; kind: LanguagePushCardKind; meaning: string }>
@@ -60,7 +71,7 @@ export type LanguagePushLlmCaller = (
 
 export type LanguagePushAnalysisInput = {
   logicalDate: string
-  entries: JournalEntry[]
+  entries: LanguagePushSourceEntry[]
   sourceKind?: LanguagePushCorpusSourceKind
   processedEntryIds: Record<string, string>
   recentCorpusItems?: LanguagePushCorpusItem[]
@@ -132,7 +143,7 @@ function extractJsonObject(raw: string): Record<string, unknown> | null {
 function buildSystemPromptForLang(lang: LanguagePushLang, config: LanguagePushConfig): string {
   if (lang === 'ja') {
     return [
-      'あなたは熟練した日本語教師・翻訳家です。中国語話者の日記および直近の翻訳コーパスから、高品質な日本語学習カードを作成してください。',
+      'あなたは熟練した日本語教師・翻訳家です。中国語話者の日記・毎朝のニュース早報（モーニングブリーフ）および直近の翻訳コーパスから、高品質な日本語学習カードを作成してください。',
       '以下の厳格なルールを必ず守ってください：',
       `1. 対象レベル：JLPT ${config.jaLevel} 以上。初級の基礎語（これ・する・良い・今日など）や「既知（熟悉）」リストの語彙および同等の易しい語は絶対に選ばないでください。`,
       '2. 【高頻度語優先 ＋ 熟知度に基づく同類展開】',
@@ -173,7 +184,7 @@ function buildSystemPromptForLang(lang: LanguagePushLang, config: LanguagePushCo
   }
 
   return [
-    'You are an expert English language coach building a high-precision study deck from a Chinese speaker\'s personal journal and recent translated corpus.',
+    'You are an expert English language coach building a high-precision study deck from a Chinese speaker\'s personal journal, daily morning news briefings, and recent translated corpus.',
     'Follow these strict rules:',
     `1. Target difficulty: above top-${config.enLevel} frequency words (CEFR B2+ / idiomatic engineering & life expressions) and crisp grammar/collocation patterns. NEVER output trivial basic words or words in the user's "Already familiar" list.`,
     '2. [High-Frequency Corpus Priority + Familiarity-Guided Expansion]',
@@ -209,7 +220,7 @@ function buildUserPromptForLang(params: {
   logicalDate: string
   lang: LanguagePushLang
   corpusWindowDays: number
-  entries: Array<{ id: string; date: string; time: string; safeBody: string }>
+  entries: EligibleEntry[]
   highFreqTerms: CorpusHighFreqTerm[]
   familiarity?: LanguagePushFamiliaritySummary
 }): string {
@@ -222,9 +233,11 @@ function buildUserPromptForLang(params: {
   ]
 
   if (entries.length > 0) {
-    lines.push('New journal entries to translate & extract (non-private, scrubbed):')
+    lines.push('New entries to translate & extract (journal + daily news briefings; non-private, scrubbed):')
     for (const item of entries) {
-      lines.push(`--- [${item.id}] (${item.date} ${item.time}) ---`)
+      lines.push(
+        `--- [${item.id}] (${item.date} ${item.time} · ${item.sourceKind === 'morning_brief' ? 'Morning Brief' : 'Journal'}) ---`,
+      )
       lines.push(item.safeBody)
     }
     lines.push('')
@@ -284,8 +297,9 @@ function parseAndValidateSingleLangPayload(
   lang: LanguagePushLang,
   logicalDate: string,
   sourceKind: LanguagePushCorpusSourceKind,
-  eligible: Array<{ id: string; date: string; time: string; safeBody: string }>,
+  eligible: EligibleEntry[],
   highFreqTerms: CorpusHighFreqTerm[],
+  sourceKindById: ReadonlyMap<string, LanguagePushCorpusSourceKind>,
 ): SingleLangParseSummary {
   const entryDateById = new Map(eligible.map((e) => [e.id, e.date]))
   for (const hf of highFreqTerms) {
@@ -297,6 +311,8 @@ function parseAndValidateSingleLangPayload(
     id: highFreqTerms[0]?.sampleEntryId || '',
     date: highFreqTerms[0]?.sampleDate || logicalDate,
   }
+  const sourceKindFor = (entryId: string): LanguagePushCorpusSourceKind =>
+    sourceKindById.get(entryId) ?? sourceKind
   const freqByWordKey = new Map(highFreqTerms.map((t) => [t.wordKey, t.totalCount]))
 
   const corpusItems: Array<Omit<LanguagePushCorpusItem, 'createdAt'>> = []
@@ -311,7 +327,7 @@ function parseAndValidateSingleLangPayload(
       corpusItems.push({
         entryId,
         sourceDate: entryDateById.get(entryId) || logicalDate,
-        sourceKind,
+        sourceKind: sourceKindFor(entryId),
         lang,
         translatedText,
       })
@@ -366,7 +382,7 @@ function parseAndValidateSingleLangPayload(
       examplePronunciations,
       sourceDate,
       sourceEntryId,
-      sourceKind,
+      sourceKind: sourceKindFor(sourceEntryId),
       corpusFreq: matchedFreq,
       isExpansion: r.isExpansion === true,
     })
@@ -384,8 +400,9 @@ async function runSingleLanguageExtraction(params: {
   lang: LanguagePushLang
   logicalDate: string
   sourceKind: LanguagePushCorpusSourceKind
-  eligible: Array<{ id: string; date: string; time: string; safeBody: string }>
+  eligible: EligibleEntry[]
   highFreqTerms: CorpusHighFreqTerm[]
+  sourceKindById: ReadonlyMap<string, LanguagePushCorpusSourceKind>
   familiarity?: LanguagePushFamiliaritySummary
   config: LanguagePushConfig
   resolvedModel: Pick<ClaudeAgentResolvedConfig, 'apiKey' | 'authToken' | 'baseUrl' | 'model'>
@@ -395,6 +412,7 @@ async function runSingleLanguageExtraction(params: {
       ok: true
       corpusItems: Array<Omit<LanguagePushCorpusItem, 'createdAt'>>
       candidates: LanguagePushCandidateInput[]
+      sentEntryIds: string[]
       inputTokens: number
       outputTokens: number
       modelUsed: string
@@ -405,7 +423,7 @@ async function runSingleLanguageExtraction(params: {
       message: string
     }
 > {
-  const { lang, logicalDate, sourceKind, eligible, highFreqTerms, familiarity, config, resolvedModel, callLlm } = params
+  const { lang, logicalDate, sourceKind, eligible, highFreqTerms, sourceKindById, familiarity, config, resolvedModel, callLlm } = params
   const systemPrompt = buildSystemPromptForLang(lang, config)
 
   // Keep high output budget for reasoning models; MiniMax-M3.1-Flash must use `effort: 'low'`
@@ -446,7 +464,7 @@ async function runSingleLanguageExtraction(params: {
 
   let parsed = extractJsonObject(firstRes.text)
   let summary = parsed
-    ? parseAndValidateSingleLangPayload(parsed, lang, logicalDate, sourceKind, eligible, highFreqTerms)
+    ? parseAndValidateSingleLangPayload(parsed, lang, logicalDate, sourceKind, eligible, highFreqTerms, sourceKindById)
     : null
 
   const needsQualityRepair =
@@ -508,6 +526,7 @@ async function runSingleLanguageExtraction(params: {
           sourceKind,
           eligible,
           highFreqTerms,
+          sourceKindById,
         )
         if (!summary || repairedSummary.validCandidates.length >= summary.validCandidates.length) {
           parsed = repairedParsed
@@ -539,6 +558,7 @@ async function runSingleLanguageExtraction(params: {
     ok: true,
     corpusItems: summary.corpusItems,
     candidates: summary.validCandidates,
+    sentEntryIds: effectiveEligible.map((e) => e.id),
     inputTokens,
     outputTokens,
     modelUsed,
@@ -557,8 +577,17 @@ export async function analyzeJournalForLanguagePush(
 
   let skippedPrivate = 0
   let skippedAlreadyProcessed = 0
-  const eligibleByLang = new Map<LanguagePushLang, Array<{ id: string; date: string; time: string; safeBody: string }>>()
+  const eligibleByLang = new Map<LanguagePushLang, EligibleEntry[]>()
   const highFreqByLang = new Map<LanguagePushLang, CorpusHighFreqTerm[]>()
+  // Provenance of every known entry id: fresh entries win, archived corpus fills fallbacks
+  // (e.g. high-frequency terms sampled from earlier morning-brief translations).
+  const sourceKindById = new Map<string, LanguagePushCorpusSourceKind>()
+  for (const item of input.recentCorpusItems ?? []) {
+    if (item.entryId) sourceKindById.set(item.entryId, item.sourceKind ?? LANGUAGE_PUSH_DEFAULT_SOURCE_KIND)
+  }
+  for (const entry of input.entries) {
+    sourceKindById.set(entry.id, entry.sourceKind ?? sourceKind)
+  }
   for (const lang of enabledLangs) {
     eligibleByLang.set(lang, [])
     const fam = input.familiarityByLang?.[lang]
@@ -574,13 +603,16 @@ export async function analyzeJournalForLanguagePush(
     highFreqByLang.set(lang, hf)
   }
 
-  const publicEntries: Array<{ id: string; date: string; time: string; safeBody: string }> = []
+  const publicEntries: EligibleEntry[] = []
   for (const entry of input.entries) {
     if (isPrivateJournalEntry(entry)) {
       skippedPrivate += 1
       continue
     }
-    if (entry.provenance && entry.provenance !== 'human') {
+    const entrySourceKind = entry.sourceKind ?? sourceKind
+    // The human-provenance guard exists for journal entries; curated desk sources
+    // (e.g. morning brief items) are not journal provenance and must not be dropped by it.
+    if (entrySourceKind === LANGUAGE_PUSH_DEFAULT_SOURCE_KIND && entry.provenance && entry.provenance !== 'human') {
       continue
     }
     const scrubbed = scrubSecrets(entry.body || '')
@@ -592,24 +624,46 @@ export async function analyzeJournalForLanguagePush(
       date: entry.date,
       time: entry.time,
       safeBody: scrubbed.slice(0, 420),
+      sourceKind: entrySourceKind,
     })
   }
 
   for (const lang of enabledLangs) {
     const bucket = eligibleByLang.get(lang)!
     let langChars = 0
+    const unprocessed: EligibleEntry[] = []
     for (const item of publicEntries) {
       const processedKey = `${item.id}:${lang}`
       if (!input.force && (input.processedEntryIds[processedKey] || input.processedEntryIds[item.id])) {
         skippedAlreadyProcessed += 1
         continue
       }
-      if (bucket.length >= MAX_ENTRIES_PER_RUN) break
-      const remainingBudget = MAX_TOTAL_INPUT_CHARS - langChars
-      if (remainingBudget < MIN_ENTRY_BODY_CHARS) break
-      const clipped = item.safeBody.slice(0, remainingBudget)
-      langChars += clipped.length
-      bucket.push({ ...item, safeBody: clipped })
+      unprocessed.push(item)
+    }
+    // Round-robin across sources (newest-first preserved inside each source) so a long
+    // morning brief cannot starve journal entries out of the daily budget, nor vice versa.
+    const queuesBySource = new Map<LanguagePushCorpusSourceKind, EligibleEntry[]>()
+    for (const item of unprocessed) {
+      const queue = queuesBySource.get(item.sourceKind) ?? []
+      queue.push(item)
+      queuesBySource.set(item.sourceKind, queue)
+    }
+    const queues = [...queuesBySource.values()]
+    let budgetExhausted = false
+    while (!budgetExhausted && bucket.length < MAX_ENTRIES_PER_RUN && queues.some((q) => q.length > 0)) {
+      for (const queue of queues) {
+        if (bucket.length >= MAX_ENTRIES_PER_RUN) break
+        const next = queue.shift()
+        if (!next) continue
+        const remainingBudget = MAX_TOTAL_INPUT_CHARS - langChars
+        if (remainingBudget < MIN_ENTRY_BODY_CHARS) {
+          budgetExhausted = true
+          break
+        }
+        const clipped = next.safeBody.slice(0, remainingBudget)
+        langChars += clipped.length
+        bucket.push({ ...next, safeBody: clipped })
+      }
     }
   }
 
@@ -657,6 +711,7 @@ export async function analyzeJournalForLanguagePush(
         sourceKind,
         eligible: langEligible,
         highFreqTerms: highFreqByLang.get(lang) ?? [],
+        sourceKindById,
         familiarity: input.familiarityByLang?.[lang],
         config: input.config,
         resolvedModel: input.resolvedModel,
@@ -674,7 +729,7 @@ export async function analyzeJournalForLanguagePush(
   let modelUsed = input.resolvedModel.model || ''
   const errors: Array<{ lang: LanguagePushLang; kind: 'needs_config' | 'parse_error' | 'provider_error'; message: string }> = []
 
-  for (const { lang, langEligible, res } of results) {
+  for (const { lang, res } of results) {
     if (!res.ok) {
       errors.push({ lang, kind: res.kind, message: `${lang.toUpperCase()}: ${res.message}` })
       continue
@@ -684,9 +739,9 @@ export async function analyzeJournalForLanguagePush(
     totalInputTokens += res.inputTokens
     totalOutputTokens += res.outputTokens
     if (res.modelUsed) modelUsed = res.modelUsed
-    // Only mark entries processed for this specific language when it actually succeeded with valid cards
+    // Only mark entries actually sent to the model as processed for this language
     if (res.candidates.length > 0 || res.corpusItems.length > 0) {
-      for (const e of langEligible) processedKeys.push(`${e.id}:${lang}`)
+      for (const id of res.sentEntryIds) processedKeys.push(`${id}:${lang}`)
     } else {
       errors.push({
         lang,

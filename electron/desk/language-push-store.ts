@@ -15,6 +15,8 @@ import {
   LANGUAGE_PUSH_DEFAULT_BACKLOG_CAP,
   LANGUAGE_PUSH_DEFAULT_CONFIG,
   LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS,
+  LANGUAGE_PUSH_DEFAULT_SCHEDULE_HOUR,
+  LANGUAGE_PUSH_DEFAULT_SCHEDULE_MINUTE,
   LANGUAGE_PUSH_DEFAULT_SOURCE_KIND,
   LANGUAGE_PUSH_SUPPORTED_LANGS,
   type LanguagePushCalendarDay,
@@ -33,6 +35,7 @@ import {
 } from '../../src/language-push-contract'
 import { getShanghaiLogicalDay, shiftDateString } from './intent-todo-time'
 import type { LanguagePushFamiliaritySummary } from './language-push-analyzer'
+import { normalizeCardReading } from './language-push-validator'
 import {
   buildDailyQueue,
   isBelowDifficultyThreshold,
@@ -105,7 +108,7 @@ function normalizeConfig(raw: unknown): LanguagePushConfig {
     : base.enabledLangs
 
   const dailyLimit = typeof obj.dailyLimit === 'number' && Number.isFinite(obj.dailyLimit)
-    ? Math.max(2, Math.min(20, Math.floor(obj.dailyLimit)))
+    ? Math.max(2, Math.min(24, Math.floor(obj.dailyLimit)))
     : base.dailyLimit
   const dailyVocabLimit = typeof obj.dailyVocabLimit === 'number' && Number.isFinite(obj.dailyVocabLimit)
     ? Math.max(0, Math.min(dailyLimit, Math.floor(obj.dailyVocabLimit)))
@@ -134,6 +137,14 @@ function normalizeConfig(raw: unknown): LanguagePushConfig {
   const cutoverHour = typeof obj.cutoverHour === 'number' && Number.isFinite(obj.cutoverHour)
     ? Math.max(0, Math.min(12, Math.floor(obj.cutoverHour)))
     : base.cutoverHour
+  const scheduleHour = typeof obj.scheduleHour === 'number' && Number.isFinite(obj.scheduleHour)
+    ? Math.max(0, Math.min(23, Math.floor(obj.scheduleHour)))
+    : LANGUAGE_PUSH_DEFAULT_SCHEDULE_HOUR
+  const scheduleMinute = typeof obj.scheduleMinute === 'number' && Number.isFinite(obj.scheduleMinute)
+    ? Math.max(0, Math.min(59, Math.floor(obj.scheduleMinute)))
+    : typeof obj.scheduleHour === 'number'
+      ? 0
+      : LANGUAGE_PUSH_DEFAULT_SCHEDULE_MINUTE
   const speechRate = typeof obj.speechRate === 'number' && Number.isFinite(obj.speechRate)
     ? Math.max(0.6, Math.min(1.4, Number(obj.speechRate.toFixed(2))))
     : base.speechRate
@@ -166,6 +177,8 @@ function normalizeConfig(raw: unknown): LanguagePushConfig {
     corpusWindowDays,
     backlogCap,
     cutoverHour,
+    scheduleHour,
+    scheduleMinute,
     autoRunEnabled: typeof obj.autoRunEnabled === 'boolean' ? obj.autoRunEnabled : base.autoRunEnabled,
     speechRate,
     ttsVoiceEn,
@@ -757,10 +770,19 @@ export class LanguagePushStore {
     const deck = this.readDeckSync()
     const allCards = Object.values(deck.cards)
     const queued = buildDailyQueue(allCards, todayDate, config)
-    const todayCards =
+    // Read-only display sanitization: legacy garbled readings in deck.json are
+    // normalized (or blanked) on the returned copies only — disk stays untouched.
+    const sanitizeReading = (card: LanguagePushCard): LanguagePushCard => {
+      const cleaned = normalizeCardReading(card.reading, card.lang)
+      return cleaned === card.reading ? card : { ...card, reading: cleaned }
+    }
+    const todayCards = (
       selectedDate === todayDate
         ? queued.todayCards
         : allCards.filter((card) => cardTouchesDate(card, selectedDate)).sort(compareHistoricalCards)
+    ).map(sanitizeReading)
+    const backlogCards = queued.backlogCards.map(sanitizeReading)
+    const masteredCards = queued.masteredCards.map(sanitizeReading)
 
     const todayVocab = todayCards.filter((c) => c.kind === 'vocab').length
     const todayGrammar = todayCards.filter((c) => c.kind === 'grammar').length
@@ -772,8 +794,8 @@ export class LanguagePushStore {
       selectedDate,
       calendarMarkers: this.listCalendarDays(),
       todayCards,
-      backlogCards: queued.backlogCards,
-      masteredCards: queued.masteredCards,
+      backlogCards,
+      masteredCards,
       counts: {
         todayTotal: todayCards.length,
         todayVocab,

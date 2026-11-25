@@ -428,7 +428,7 @@ export function buildDailyQueue(
   const dueVocab = dueNow.filter((c) => c.kind === 'vocab')
   const dueGrammar = dueNow.filter((c) => c.kind === 'grammar')
 
-  const dailyLimit = Math.max(1, Math.min(20, Math.floor(config.dailyLimit || 8)))
+  const dailyLimit = Math.max(1, Math.min(24, Math.floor(config.dailyLimit || 8)))
   const grammarCap = Math.min(dailyLimit, Math.max(0, Math.floor(config.dailyGrammarLimit ?? 2)))
   const vocabCap = Math.min(dailyLimit, Math.max(0, Math.floor(config.dailyVocabLimit ?? 6)))
 

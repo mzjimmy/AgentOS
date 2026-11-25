@@ -23,11 +23,12 @@ export type LanguagePushCardKind = (typeof LANGUAGE_PUSH_CARD_KINDS)[number]
 
 /**
  * Extensible corpus source identifier.
- * Today only `'journal'` is wired; future Desk windows (e.g. `'morning_brief'`) can
- * register a `LanguagePushCorpusProvider` without changing storage or UI contracts.
+ * `'journal'` (时间日记) and `'morning_brief'` (每日早报) are wired today; future Desk
+ * windows can register a `LanguagePushCorpusProvider` without changing storage or UI contracts.
  */
-export type LanguagePushCorpusSourceKind = 'journal' | (string & {})
+export type LanguagePushCorpusSourceKind = 'journal' | 'morning_brief' | (string & {})
 export const LANGUAGE_PUSH_DEFAULT_SOURCE_KIND: LanguagePushCorpusSourceKind = 'journal'
+export const LANGUAGE_PUSH_MORNING_BRIEF_SOURCE_KIND: LanguagePushCorpusSourceKind = 'morning_brief'
 
 export type LanguagePushCardStatus = 'active' | 'mastered' | 'archived'
 
@@ -50,6 +51,8 @@ export const LANGUAGE_PUSH_UNFAMILIAR_INTERVAL_DAYS = 1
 export const LANGUAGE_PUSH_REVIEW_INTERVAL_DAYS = LANGUAGE_PUSH_FUZZY_INTERVAL_DAYS
 
 export const LANGUAGE_PUSH_DEFAULT_CUTOVER_HOUR = 4
+export const LANGUAGE_PUSH_DEFAULT_SCHEDULE_HOUR = 5
+export const LANGUAGE_PUSH_DEFAULT_SCHEDULE_MINUTE = 0
 export const LANGUAGE_PUSH_DEFAULT_DAILY_LIMIT = 8
 export const LANGUAGE_PUSH_DEFAULT_VOCAB_LIMIT = 6
 export const LANGUAGE_PUSH_DEFAULT_GRAMMAR_LIMIT = 2
@@ -94,7 +97,11 @@ export type LanguagePushConfig = {
   jaLevel: LanguagePushJaLevel
   corpusWindowDays: number
   backlogCap: number
+  /** Logical-day boundary (04:00) aligned with IntentTodo/MorningBrief; not the trigger time. */
   cutoverHour: number
+  /** Daily auto-extraction trigger time in Asia/Shanghai (default 05:00). */
+  scheduleHour: number
+  scheduleMinute: number
   autoRunEnabled: boolean
   speechRate: number
   ttsVoiceEn: string
@@ -113,6 +120,8 @@ export const LANGUAGE_PUSH_DEFAULT_CONFIG: LanguagePushConfig = {
   corpusWindowDays: LANGUAGE_PUSH_DEFAULT_CORPUS_WINDOW_DAYS,
   backlogCap: LANGUAGE_PUSH_DEFAULT_BACKLOG_CAP,
   cutoverHour: LANGUAGE_PUSH_DEFAULT_CUTOVER_HOUR,
+  scheduleHour: LANGUAGE_PUSH_DEFAULT_SCHEDULE_HOUR,
+  scheduleMinute: LANGUAGE_PUSH_DEFAULT_SCHEDULE_MINUTE,
   autoRunEnabled: true,
   speechRate: 0.95,
   ttsVoiceEn: LANGUAGE_PUSH_DEFAULT_VOICE_EN,
