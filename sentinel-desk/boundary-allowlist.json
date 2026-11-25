@@ -290,12 +290,6 @@
     },
     {
       "rule": "ratchet:desk-legacy->base",
-      "from": "electron/desk/outbound-service.ts",
-      "to": "src/desktop-seam.ts",
-      "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"
-    },
-    {
-      "rule": "ratchet:desk-legacy->base",
       "from": "src/components/desk/DeskCalendarPopover.tsx",
       "to": "src/i18n/i18n.tsx",
       "note": "legacy desk code reaches into the base; migrate to sentinel-desk/core in P2"

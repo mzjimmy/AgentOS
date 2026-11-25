@@ -1,13 +1,11 @@
 /**
- * Orchestration service & standalone IPC registrar for SentinelDesk Outbound Studio.
+ * Orchestration service for SentinelDesk Outbound Studio.
  *
  * - Reads non-private journal entries across lookback window + recent Git commits.
  * - Separates candid Moments/Ship-Logs from single-point WeChat Column seeds & full drafts.
  */
 
-import type { IpcMain } from 'electron'
 import type { ChatModelPick, ClaudeAgentResolvedConfig, ClaudeAgentSettingsSnapshot } from '../../src/claude-chat-types'
-import { DESKTOP_INVOKE_CHANNELS } from '../../src/desktop-seam'
 import type { JournalDayResult } from '../../src/journal-contract'
 import type {
   OutboundChangedEvent,
@@ -60,6 +58,7 @@ export class OutboundService {
   private draftingSeedId: string | null = null
   private lastError: string | null = null
   private inflightExtract: Promise<OutboundExtractResult> | null = null
+  private inflightDraft: Promise<OutboundDraftResult> | null = null
   private disposed = false
 
   constructor(private readonly options: OutboundServiceOptions) {
@@ -236,6 +235,10 @@ export class OutboundService {
   }
 
   async generateDraft(input: OutboundDraftInput): Promise<OutboundDraftResult> {
+    if (this.inflightDraft) return this.inflightDraft
+    if (this.inflightExtract) {
+      return { ok: false, error: '当前正在提炼当日外宣素材，请稍后再生成初稿。' }
+    }
     const safeDate = DATE_RE.test(input.date) ? input.date : getShanghaiLogicalDay(this.now(), 4)
     const pack = this.store.getDayPack(safeDate)
     const seed = pack?.seeds.find((s) => s.id === input.seedId)
@@ -249,6 +252,21 @@ export class OutboundService {
       return { ok: false, error: '尚未配置云端模型凭据。' }
     }
 
+    const task = this.executeGenerateDraft(safeDate, seed, input.customAngle, info.resolved)
+    this.inflightDraft = task
+    try {
+      return await task
+    } finally {
+      this.inflightDraft = null
+    }
+  }
+
+  private async executeGenerateDraft(
+    safeDate: string,
+    seed: NonNullable<ReturnType<OutboundStore['getDayPack']>>['seeds'][number],
+    customAngle: string | undefined,
+    resolvedModel: ClaudeAgentResolvedConfig,
+  ): Promise<OutboundDraftResult> {
     this.runState = 'drafting'
     this.runningDate = safeDate
     this.draftingSeedId = seed.id
@@ -266,9 +284,9 @@ export class OutboundService {
         publicEntries,
         commits,
         config,
-        customAngle: input.customAngle,
+        customAngle,
         markdownPath: provisionalPath,
-        resolvedModel: info.resolved,
+        resolvedModel,
         llmCaller: this.options.llmCaller,
         nowIso: this.now().toISOString(),
       })
@@ -307,52 +325,5 @@ export class OutboundService {
     }
     this.emitChanged('saved', updated.date)
     return { ok: true, draft: updated }
-  }
-}
-
-export function registerOutboundIpc(
-  ipcMain: IpcMain,
-  serviceOrGetter: OutboundService | (() => OutboundService),
-): () => void {
-  const resolveService = typeof serviceOrGetter === 'function' ? serviceOrGetter : () => serviceOrGetter
-
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getOutboundOverview, (_event, selectedDate?: unknown) =>
-    resolveService().getOverview(typeof selectedDate === 'string' ? selectedDate : undefined),
-  )
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.extractOutboundPack, (_event, options?: unknown) => {
-    const safe = options && typeof options === 'object' ? (options as { date?: unknown; force?: unknown }) : {}
-    return resolveService().extract({
-      date: typeof safe.date === 'string' ? safe.date : undefined,
-      force: safe.force === true,
-    })
-  })
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.generateOutboundDraft, (_event, input: unknown) => {
-    const safe = input && typeof input === 'object' ? (input as Partial<OutboundDraftInput>) : {}
-    return resolveService().generateDraft({
-      date: typeof safe.date === 'string' ? safe.date : '',
-      seedId: typeof safe.seedId === 'string' ? safe.seedId : '',
-      customAngle: typeof safe.customAngle === 'string' ? safe.customAngle : undefined,
-    })
-  })
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveOutboundDraft, (_event, input: unknown) => {
-    const safe = input && typeof input === 'object' ? (input as Partial<OutboundSaveDraftInput>) : {}
-    return resolveService().saveDraft({
-      draftId: typeof safe.draftId === 'string' ? safe.draftId : '',
-      title: typeof safe.title === 'string' ? safe.title : undefined,
-      markdown: typeof safe.markdown === 'string' ? safe.markdown : '',
-    })
-  })
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.getOutboundConfig, () => resolveService().getConfig())
-  ipcMain.handle(DESKTOP_INVOKE_CHANNELS.saveOutboundConfig, (_event, patch: unknown) =>
-    resolveService().saveConfig((patch && typeof patch === 'object' ? patch : {}) as Partial<OutboundConfig>),
-  )
-
-  return () => {
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.getOutboundOverview)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.extractOutboundPack)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.generateOutboundDraft)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.saveOutboundDraft)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.getOutboundConfig)
-    ipcMain.removeHandler(DESKTOP_INVOKE_CHANNELS.saveOutboundConfig)
   }
 }

@@ -213,3 +213,84 @@ test('pinned modules, locales, and UI minimalism redlines stay 1:1 consistent fo
   assert.match(obJsx, /overview\?\.runState === 'drafting'/)
   assert.match(obJsx, /overview\?\.runState === 'error' && overview\.lastError/)
 })
+
+test('OutboundService.generateDraft coalesces concurrent calls without duplicate LLM invocations', async () => {
+  const { OutboundService } = loadTsModule(resolve(rootDir, 'electron/desk/outbound-service.ts'))
+  const tempRoot = mkdtempSync(join(tmpdir(), 'sentinel-outbound-concurrency-'))
+  try {
+    let callCount = 0
+    let draftLlmCalls = 0
+    const svc = new OutboundService({
+      journalStore: {
+        getConfig: () => ({ deskRoot: tempRoot }),
+        getDay: (date) => ({
+          ok: true,
+          date,
+          entries: [
+            {
+              id: 'je_pub_1',
+              date,
+              time: '10:00',
+              category: '工程',
+              body: '落地了边界护栏脚本并收敛了重复 IPC 副本。',
+              tags: [],
+              projects: ['AgentOS'],
+              private: false,
+            },
+          ],
+        }),
+      },
+      settingsStore: {
+        resolve: () => ({ apiKey: 'test-key', authToken: '', baseUrl: 'https://api.example.com', model: 'claude-sonnet', configSource: 'settings' }),
+        getSnapshot: () => ({ settings: { activeProviderId: 'p1', providers: [{ id: 'p1', name: 'Test' }] } }),
+      },
+      commitCollector: () => [],
+      llmCaller: async () => {
+        callCount += 1
+        if (callCount === 1) {
+          return {
+            ok: true,
+            model: 'claude-sonnet',
+            text: JSON.stringify({
+              moments: [],
+              seeds: [
+                {
+                  title: '边界护栏实践',
+                  hook: '为什么写护栏',
+                  storyArc: ['背景', '方案', '复盘'],
+                  anchorIds: ['je_pub_1'],
+                },
+              ],
+            }),
+          }
+        }
+        draftLlmCalls += 1
+        await new Promise((r) => setTimeout(r, 30))
+        return {
+          ok: true,
+          model: 'claude-sonnet',
+          text: JSON.stringify({
+            title: '并发防重入测试文章',
+            altTitles: ['备选标题'],
+            bodyMarkdown: '并发防重入测试正文。\n\n保留真性情的第二段。',
+          }),
+        }
+      },
+    })
+
+    const extracted = await svc.extract({ date: '2026-11-24', force: true })
+    assert.equal(extracted.ok, true)
+    const seedId = extracted.dayPack.seeds[0].id
+
+    const [r1, r2] = await Promise.all([
+      svc.generateDraft({ date: '2026-11-24', seedId }),
+      svc.generateDraft({ date: '2026-11-24', seedId }),
+    ])
+    assert.equal(r1.ok, true)
+    assert.equal(r2.ok, true)
+    assert.equal(draftLlmCalls, 1)
+    assert.equal(svc.getOverview('2026-11-24').runState, 'idle')
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
