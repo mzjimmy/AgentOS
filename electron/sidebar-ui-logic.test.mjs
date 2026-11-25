@@ -131,7 +131,16 @@ test('zh and en locale catalogs define new sidebar keys with 1:1 parity', () => 
   const zh = JSON.parse(read('src/locales/zh.json'))
   const en = JSON.parse(read('src/locales/en.json'))
 
-  for (const key of ['brandName', 'menuOpenGraphicalUi', 'projectMoreActions', 'newProjectThread']) {
+  for (const key of [
+    'brandName',
+    'menuOpenGraphicalUi',
+    'projectMoreActions',
+    'newProjectThread',
+    'prevPinnedModule',
+    'nextPinnedModule',
+    'atFirstPinnedModule',
+    'atLastPinnedModule',
+  ]) {
     assert.equal(typeof zh.sidebar[key], 'string', `zh sidebar.${key}`)
     assert.equal(typeof en.sidebar[key], 'string', `en sidebar.${key}`)
     assert.ok(zh.sidebar[key].length > 0)
@@ -139,4 +148,64 @@ test('zh and en locale catalogs define new sidebar keys with 1:1 parity', () => 
   }
   assert.equal(zh.sidebar.brandName, 'SentinelDesk')
   assert.equal(en.sidebar.brandName, 'SentinelDesk')
+})
+
+test('top-left back/forward arrows step deterministically through PINNED_MODULES and disable only at ends', () => {
+  const modulePath = resolve(rootDir, 'src/components/pinned-modules.ts')
+  const { outputText } = ts.transpileModule(readFileSync(modulePath, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    fileName: modulePath,
+  })
+  const mod = { exports: {} }
+  Function('exports', 'module', 'require', outputText)(mod.exports, mod, require)
+  const { PINNED_MODULES, resolvePinnedModuleNavigation } = mod.exports
+
+  assert.equal(typeof resolvePinnedModuleNavigation, 'function', 'resolvePinnedModuleNavigation must be exported')
+  assert.deepEqual(
+    PINNED_MODULES.map((m) => m.id),
+    ['journal', 'intent-todo', 'quick-commands', 'language-push', 'morning-brief', 'outbound'],
+  )
+
+  // First module (journal): prev disabled, next -> intent-todo
+  const atFirst = resolvePinnedModuleNavigation('journal')
+  assert.equal(atFirst.prev, null)
+  assert.equal(atFirst.next?.id, 'intent-todo')
+
+  // Stepping forward reaches outbound in exact sidebar order and stops at outbound
+  let cur = 'journal'
+  const visitedForward = [cur]
+  for (let i = 0; i < 10; i += 1) {
+    const step = resolvePinnedModuleNavigation(cur)
+    if (!step.next) break
+    cur = step.next.id
+    visitedForward.push(cur)
+  }
+  assert.deepEqual(visitedForward, ['journal', 'intent-todo', 'quick-commands', 'language-push', 'morning-brief', 'outbound'])
+
+  // Last module (outbound): prev -> morning-brief, next disabled
+  const atLast = resolvePinnedModuleNavigation('outbound')
+  assert.equal(atLast.prev?.id, 'morning-brief')
+  assert.equal(atLast.next, null)
+
+  // Stepping backward from outbound returns to journal in exact reverse order
+  const visitedBack = [cur]
+  for (let i = 0; i < 10; i += 1) {
+    const step = resolvePinnedModuleNavigation(cur)
+    if (!step.prev) break
+    cur = step.prev.id
+    visitedBack.push(cur)
+  }
+  assert.deepEqual(visitedBack, ['outbound', 'morning-brief', 'language-push', 'quick-commands', 'intent-todo', 'journal'])
+
+  // Outside pinned modules (home project chat / docs): never both disabled; < enters outbound, > enters journal
+  const atHome = resolvePinnedModuleNavigation('home')
+  assert.equal(atHome.prev?.id, 'outbound')
+  assert.equal(atHome.next?.id, 'journal')
+
+  // AppShellSidebar wires #btn-back and #btn-forward to resolvePinnedModuleNavigation + onOpenPinnedModule (no window.history)
+  const sidebar = read('src/components/AppShellSidebar.tsx')
+  assert.match(sidebar, /resolvePinnedModuleNavigation\(activeViewId\)/)
+  assert.doesNotMatch(sidebar, /window\.history\.(back|forward)\(\)/)
+  assert.match(sidebar, /id="btn-back"[\s\S]*?disabled=\{!prevPinnedModule\}[\s\S]*?onOpenPinnedModule\(prevPinnedModule\.id\)/)
+  assert.match(sidebar, /id="btn-forward"[\s\S]*?disabled=\{!nextPinnedModule\}[\s\S]*?onOpenPinnedModule\(nextPinnedModule\.id\)/)
 })

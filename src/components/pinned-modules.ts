@@ -55,3 +55,28 @@ export const PINNED_MODULES: readonly PinnedModuleDefinition[] = [
 export function resolvePinnedModuleByViewId(viewId: string): PinnedModuleDefinition | undefined {
   return PINNED_MODULES.find((item) => item.id === viewId)
 }
+
+export type PinnedModuleNavState = {
+  prev: PinnedModuleDefinition | null
+  next: PinnedModuleDefinition | null
+}
+
+/**
+ * Deterministic sequential navigation over `PINNED_MODULES` for the top-left `<` / `>` buttons.
+ * - On any pinned module: steps strictly to `idx - 1` / `idx + 1`, disabling at first / last module.
+ * - Outside pinned modules (e.g. project chat `home` / `docs`): `<` enters the bottom module (`outbound`),
+ *   `>` enters the top module (`journal`), so both arrows are never simultaneously disabled.
+ */
+export function resolvePinnedModuleNavigation(activeViewId: AppViewId): PinnedModuleNavState {
+  const idx = PINNED_MODULES.findIndex((item) => item.id === activeViewId)
+  if (idx < 0) {
+    return {
+      prev: PINNED_MODULES[PINNED_MODULES.length - 1] ?? null,
+      next: PINNED_MODULES[0] ?? null,
+    }
+  }
+  return {
+    prev: idx > 0 ? PINNED_MODULES[idx - 1] : null,
+    next: idx < PINNED_MODULES.length - 1 ? PINNED_MODULES[idx + 1] : null,
+  }
+}

@@ -449,6 +449,7 @@ export function QuickCommandsPage({
       aria-label={t('sidebar.pinnedQuickCommands')}
     >
       <header className="qc-header">
+        <div className="qc-header-drag" aria-hidden="true" />
         <div className="qc-header-inner">
           <div className="qc-header-copy">
             <h1 className="qc-title">{t('shell.viewQuickCommands')}</h1>

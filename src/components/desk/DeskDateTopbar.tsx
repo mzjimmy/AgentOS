@@ -57,7 +57,8 @@ export function DeskDateTopbar({
   )
 
   return (
-    <header className="desk-topbar draggable">
+    <header className="desk-topbar">
+      <div className="desk-topbar-drag" aria-hidden="true" />
       <div className="desk-topbar-left no-drag">
         <div className="desk-calendar-anchor">
           <button

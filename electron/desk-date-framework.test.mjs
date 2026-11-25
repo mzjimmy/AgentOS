@@ -433,3 +433,93 @@ test('review regression F6/F8: shared DeskModalDialog focus/Esc trap & stale-IPC
   assert.match(mbTsx, /loadSeqRef/, 'MorningBriefPage must guard stale async overview responses')
   assert.match(obTsx, /loadSeqRef/, 'OutboundPage must guard stale async overview responses')
 })
+
+test('BDD/ATDD: collapsed sidebar keeps top-left chrome toolbar clickable over DeskDateTopbar without losing window drag', () => {
+  const topbarTsx = readFileSync(resolve(rootDir, 'src/components/desk/DeskDateTopbar.tsx'), 'utf8')
+  const topbarCss = readFileSync(resolve(rootDir, 'src/styles/desk-date-topbar.css'), 'utf8')
+
+  // R1: <header className="desk-topbar"> must NEVER be a global drag region (mirrors window-chrome.test.mjs for app-workspace-header)
+  assert.doesNotMatch(
+    topbarTsx,
+    /<header\s+className="[^"]*\bdesk-topbar\b[^"]*\bdraggable\b/,
+    'desk-topbar <header> must not declare .draggable globally or macOS drag regions swallow .app-chrome-toolbar when sidebar is collapsed',
+  )
+  assert.doesNotMatch(
+    topbarCss,
+    /\.desk-topbar\s*\{[^}]*-webkit-app-region:\s*drag;/s,
+    '.desk-topbar container must not declare -webkit-app-region: drag directly',
+  )
+
+  // R2 & R3: dedicated .desk-topbar-drag layer precedes interactive children in DOM and clears .app-chrome-toolbar when collapsed
+  const dragIndex = topbarTsx.indexOf('className="desk-topbar-drag"')
+  const leftIndex = topbarTsx.indexOf('className="desk-topbar-left no-drag"')
+  assert.ok(dragIndex >= 0, 'DeskDateTopbar must render a dedicated .desk-topbar-drag layer')
+  assert.ok(
+    leftIndex > dragIndex,
+    '.desk-topbar-drag must precede .desk-topbar-left in DOM order so Blink pre-order annotated regions carve out no-drag controls after drag',
+  )
+
+  assert.match(
+    topbarCss,
+    /\.desk-topbar-drag\s*\{[^}]*position:\s*absolute;[^}]*-webkit-app-region:\s*drag;[^}]*pointer-events:\s*none;/s,
+    '.desk-topbar-drag must be an absolute non-blocking drag layer',
+  )
+  assert.match(
+    topbarCss,
+    /\.app-shell\.is-sidebar-collapsed\s+\.desk-topbar-drag\s*\{[^}]*left:\s*calc\([^;]*--spacing-token-safe-header-left[^;]*--width-chrome-toolbar[^;]*\);/s,
+    'when sidebar is collapsed, .desk-topbar-drag must start after the safe-left + chrome-toolbar zone',
+  )
+  assert.match(
+    topbarCss,
+    /html\[data-windows-titlebar-overlay='true'\]\s+\.desk-topbar-drag\s*\{[^}]*right:\s*var\(--spacing-token-safe-header-right\);/s,
+    'Windows titlebar overlay must keep .desk-topbar-drag clear of right caption controls',
+  )
+
+  // R4: narrow viewport media query must not collapse .app-shell.is-sidebar-collapsed .desk-topbar padding-left to 12px
+  const narrowMediaMatch = topbarCss.match(/@media\s*\(max-width:\s*720px\)\s*\{([\s\S]*)\}\s*$/)
+  assert.ok(narrowMediaMatch, 'expected @media (max-width: 720px) block in desk-date-topbar.css')
+  assert.doesNotMatch(
+    narrowMediaMatch[1],
+    /\.app-shell\.is-sidebar-collapsed\s+\.desk-topbar[^{]*\{[^}]*padding-left:\s*12px;/s,
+    'narrow media query must preserve collapsed left safe-area padding so topbar controls never overlap .app-chrome-toolbar',
+  )
+
+  // TDD geometry verification of Blink pre-order CollectAnnotatedRegions + Electron macOS SkRegion Union/Difference
+  const evaluatePointDraggable = (regions, x, y) => {
+    let draggable = false
+    for (const region of regions) {
+      if (x >= region.left && x < region.right && y >= region.top && y < region.bottom) {
+        draggable = region.draggable
+      }
+    }
+    return draggable
+  }
+
+  const chromeButtons = [
+    { id: 'btn-toggle-sidebar', x: 100, y: 20 },
+    { id: 'btn-back', x: 129, y: 20 },
+    { id: 'btn-forward', x: 157, y: 20 },
+    { id: 'btn-sidebar-search', x: 186, y: 20 },
+  ]
+  const fixedRegions = [
+    // Preceding DOM sibling: .app-chrome-toolbar (no-drag)
+    { left: 88, top: 0, right: 232, bottom: 40, draggable: false },
+    // Following DOM sibling: .desk-topbar-drag inset to 244px when collapsed
+    { left: 244, top: 0, right: 1280, bottom: 56, draggable: true },
+    // Following children inside .desk-topbar (no-drag)
+    { left: 244, top: 10, right: 380, bottom: 46, draggable: false }, // left controls
+    { left: 500, top: 8, right: 780, bottom: 48, draggable: false }, // center week wheel
+    { left: 960, top: 12, right: 1036, bottom: 44, draggable: false }, // right segmented switch
+  ]
+
+  for (const btn of chromeButtons) {
+    assert.equal(
+      evaluatePointDraggable(fixedRegions, btn.x, btn.y),
+      false,
+      `${btn.id} must remain clickable (not draggable) when sidebar is collapsed`,
+    )
+  }
+  assert.equal(evaluatePointDraggable(fixedRegions, 440, 28), true, 'blank topbar gap must remain draggable')
+  assert.equal(evaluatePointDraggable(fixedRegions, 640, 28), false, 'center week wheel must remain clickable')
+  assert.equal(evaluatePointDraggable(fixedRegions, 990, 28), false, 'right segmented switch must remain clickable')
+})

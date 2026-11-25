@@ -35,7 +35,7 @@ import type {
   WorkspaceTab,
 } from './types'
 import { getSettingsSidebarNav } from './app-shell-constants.ts'
-import { PINNED_MODULES } from './pinned-modules'
+import { PINNED_MODULES, resolvePinnedModuleNavigation } from './pinned-modules'
 import { sortProjectsForSidebar } from './project-order'
 import { workspaceRuntimeScopeId, type RuntimeDevelopmentSnapshot } from '../runtime-development-contract'
 import { runtimeDevelopmentStatus, runtimeNeedsTroubleshooting } from './runtime-event-state'
@@ -188,8 +188,8 @@ export function AppShellSidebar({
   projectSkillStates,
   selectedProjectSkill,
   hiddenSkillPathsByProject,
-  canBack,
-  canForward,
+  canBack: _canBack,
+  canForward: _canForward,
   onCreateProject,
   onOpenSearch,
   onOpenPinnedModule,
@@ -220,6 +220,13 @@ export function AppShellSidebar({
 
   const { locale, t } = useI18n()
   const isSettingsSidebar = activeViewId === 'settings'
+  const { prev: prevPinnedModule, next: nextPinnedModule } = resolvePinnedModuleNavigation(activeViewId)
+  const prevPinnedLabel = prevPinnedModule
+    ? t('sidebar.prevPinnedModule', { name: t(prevPinnedModule.labelKey) })
+    : t('sidebar.atFirstPinnedModule')
+  const nextPinnedLabel = nextPinnedModule
+    ? t('sidebar.nextPinnedModule', { name: t(nextPinnedModule.labelKey) })
+    : t('sidebar.atLastPinnedModule')
   const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const collapsedProjectIdSet = useMemo(() => new Set(collapsedProjectIds), [collapsedProjectIds])
@@ -1125,10 +1132,12 @@ export function AppShellSidebar({
           type="button"
           className="btn btn-toolbar"
           id="btn-back"
-          title={t('sidebar.back')}
-          aria-label={t('sidebar.back')}
-          disabled={!canBack}
-          onClick={() => window.history.back()}
+          title={prevPinnedLabel}
+          aria-label={prevPinnedLabel}
+          disabled={!prevPinnedModule}
+          onClick={() => {
+            if (prevPinnedModule) onOpenPinnedModule(prevPinnedModule.id)
+          }}
         >
           <IconInline name="back" />
         </button>
@@ -1136,10 +1145,12 @@ export function AppShellSidebar({
           type="button"
           className="btn btn-toolbar"
           id="btn-forward"
-          title={t('sidebar.forward')}
-          aria-label={t('sidebar.forward')}
-          disabled={!canForward}
-          onClick={() => window.history.forward()}
+          title={nextPinnedLabel}
+          aria-label={nextPinnedLabel}
+          disabled={!nextPinnedModule}
+          onClick={() => {
+            if (nextPinnedModule) onOpenPinnedModule(nextPinnedModule.id)
+          }}
         >
           <IconInline name="forward" />
         </button>

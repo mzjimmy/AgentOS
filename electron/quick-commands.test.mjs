@@ -639,3 +639,30 @@ test('quick command target options, header persistence, and priority resolution 
   assert.equal(cleared.ok, true)
   assert.equal(cleared.item.defaultTarget, undefined)
 })
+
+test('BDD/ATDD: quick commands header keeps collapsed chrome toolbar clickable via inset drag layer', () => {
+  const pageSource = readFileSync(resolve(rootDir, 'src/components/quick-commands/QuickCommandsPage.tsx'), 'utf8')
+  const cssSource = readFileSync(resolve(rootDir, 'src/styles/quick-commands-page.css'), 'utf8')
+
+  assert.doesNotMatch(
+    cssSource,
+    /\.qc-header\s*\{[^}]*-webkit-app-region:\s*drag;/s,
+    '.qc-header container must not declare -webkit-app-region: drag directly or it swallows .app-chrome-toolbar when sidebar is collapsed',
+  )
+
+  const dragIdx = pageSource.indexOf('className="qc-header-drag"')
+  const innerIdx = pageSource.indexOf('className="qc-header-inner"')
+  assert.ok(dragIdx >= 0, 'QuickCommandsPage must render a dedicated .qc-header-drag layer')
+  assert.ok(innerIdx > dragIdx, '.qc-header-drag must precede .qc-header-inner in DOM order')
+
+  assert.match(
+    cssSource,
+    /\.qc-header-drag\s*\{[^}]*position:\s*absolute;[^}]*-webkit-app-region:\s*drag;[^}]*pointer-events:\s*none;/s,
+    '.qc-header-drag must be an absolute non-blocking drag layer',
+  )
+  assert.match(
+    cssSource,
+    /\.app-shell\.is-sidebar-collapsed\s+\.qc-header-drag\s*\{[^}]*left:\s*calc\([^;]*--spacing-token-safe-header-left[^;]*--width-chrome-toolbar[^;]*\);/s,
+    'collapsed .qc-header-drag must clear .app-chrome-toolbar',
+  )
+})

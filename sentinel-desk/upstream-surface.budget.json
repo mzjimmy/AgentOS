@@ -122,10 +122,10 @@
       "note": "desk pages mounted into the base shell"
     },
     "src/components/AppShellSidebar.tsx": {
-      "added": 231,
-      "removed": 221,
+      "added": 244,
+      "removed": 223,
       "category": "C",
-      "note": "generic sidebar behaviour patch"
+      "note": "generic sidebar behaviour patch (+sequential pinned-module navigation for top-left back/forward arrows)"
     },
     "src/components/AppShellWorkspace.tsx": {
       "added": 86,
@@ -182,16 +182,16 @@
       "note": "desk icons"
     },
     "src/locales/en.json": {
-      "added": 470,
+      "added": 494,
       "removed": 0,
       "category": "A",
-      "note": "desk UI strings (en)"
+      "note": "desk UI strings (en, +intentTodo inline dispatch polish panel, +morningBrief loop toggle, +languagePush Option 3 accordion/loop playback keys, +pinned-module arrow tooltips)"
     },
     "src/locales/zh.json": {
-      "added": 470,
+      "added": 494,
       "removed": 0,
       "category": "A",
-      "note": "desk UI strings (zh)"
+      "note": "desk UI strings (zh, +intentTodo inline dispatch polish panel, +morningBrief loop toggle, +languagePush Option 3 accordion/loop playback keys, +pinned-module arrow tooltips)"
     },
     "src/style.css": {
       "added": 1,
