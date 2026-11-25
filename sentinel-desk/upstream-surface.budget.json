@@ -56,10 +56,10 @@
       "note": "generic agent settings behaviour patch"
     },
     "electron/desktop-seam.test.mjs": {
-      "added": 8,
-      "removed": 2,
+      "added": 16,
+      "removed": 3,
       "category": "A",
-      "note": "base seam test extended for the desk channels"
+      "note": "base seam test extended for the desk channels (+claude-chat:submit permissionMode strip: the renderer-supplied permissionMode must be destructured out and resolved only from getDesktopPreferencesStore().read().chatPermissionMode)"
     },
     "electron/local-app-runtime/static.ts": {
       "added": 87,
@@ -90,6 +90,12 @@
       "removed": 5,
       "category": "C",
       "note": "generic project chat broker patch"
+    },
+    "electron/project-chat-contract.test.mjs": {
+      "added": 1,
+      "removed": 0,
+      "category": "C",
+      "note": "mock ./claude-agent-runner/permission in localRequire for runner permission patch"
     },
     "electron/static-runtime.test.mjs": {
       "added": 120,

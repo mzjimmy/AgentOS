@@ -1665,8 +1665,8 @@ if (gotSingleInstanceLock) {
     })
     ipcMain.handle('claude-chat:submit', (_event, payload: ClaudeChatSubmitPayload) => {
       const { projectId: _rendererProjectId, projectRuntimePrompt: _rendererRuntimePrompt, ...safePayload } = payload
-      const permissionMode = safePayload.permissionMode ?? getDesktopPreferencesStore().read().chatPermissionMode ?? 'auto'
-      return getClaudeAgentRunner().submit({ ...safePayload, permissionMode })
+      const { permissionMode: _rendererPermissionMode, ...runnerPayload } = safePayload
+      return getClaudeAgentRunner().submit({ ...runnerPayload, permissionMode: getDesktopPreferencesStore().read().chatPermissionMode ?? 'auto' })
     })
     ipcMain.handle('claude-chat:cancel', (_event, requestId?: string) => {
       return getClaudeAgentRunner().cancel(requestId)

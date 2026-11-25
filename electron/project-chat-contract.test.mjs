@@ -38,6 +38,7 @@ function loadRunnerModule() {
     if (specifier === './claude-agent-runner/file-diff') return {}
     if (specifier === './claude-agent-runner/input') return { normalizeSubmitAttachments: () => [], resolveWorkspaceCwd: (cwd, fallback) => cwd ?? fallback }
     if (specifier === './claude-agent-runner/mcp') return {}
+    if (specifier === './claude-agent-runner/permission') return { resolveAutoPermissionDecision: () => null }
     if (specifier === './claude-agent-runner/web-search') return {}
     if (specifier === './chat-broker-core') return { runtimeMutationTargetAllowed: async () => true }
     if (specifier === './home-plugin-customization-prompt') return {}

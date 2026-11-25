@@ -46,8 +46,15 @@ test('Project Chat production composition is Main-only and preserves legacy roll
 
   assert.match(main, /const PROJECT_CHAT_BROKER_V2_ENABLED = projectChatBrokerV2Enabled\(process\.env\)/)
   assert.match(main, /createProjectChatIpcRouter|RendererCapabilityRegistry|ProjectChatBroker/)
-  assert.match(main, /ipcMain\.handle\('claude-chat:submit',[\s\S]{0,240}getClaudeAgentRunner\(\)\.submit\(safePayload\)/)
+  const submitStart = main.indexOf("ipcMain.handle('claude-chat:submit'")
+  const submitEnd = main.indexOf("ipcMain.handle('claude-chat:cancel'", submitStart)
+  assert.ok(submitStart >= 0 && submitEnd > submitStart, 'the legacy claude-chat:submit handler is registered')
+  const submitHandler = main.slice(submitStart, submitEnd)
   assert.match(main, /const \{ projectId: _rendererProjectId, projectRuntimePrompt: _rendererRuntimePrompt, \.\.\.safePayload \} = payload/)
+  // The renderer must not pick the permission mode: it is destructured out, and Main resolves it from the desktop preferences only.
+  assert.match(submitHandler, /const \{ permissionMode: _rendererPermissionMode, \.\.\.runnerPayload \} = safePayload/)
+  assert.match(submitHandler, /getClaudeAgentRunner\(\)\.submit\(\{ \.\.\.runnerPayload, permissionMode: getDesktopPreferencesStore\(\)\.read\(\)\.chatPermissionMode \?\? 'auto' \}\)/)
+  assert.doesNotMatch(submitHandler, /\.permissionMode/, 'no permissionMode is ever read off a renderer-supplied payload')
   assert.match(main, /ipcMain\.handle\('claude-chat:cancel',[\s\S]{0,120}getClaudeAgentRunner\(\)\.cancel\(requestId\)/)
   assert.match(main, /ipcMain\.handle\('claude-chat:new-thread',[\s\S]{0,120}getClaudeAgentRunner\(\)\.newThread\(threadId\)/)
   assert.match(main, /ipcMain\.handle\('claude-chat:answer-permission-request',[\s\S]{0,140}getClaudeAgentRunner\(\)\.answerPermissionRequest\(payload\)/)
